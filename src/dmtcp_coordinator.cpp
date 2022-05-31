@@ -85,6 +85,7 @@
 #include "tokenize.h"
 #include "syscallwrappers.h"
 #include "util.h"
+#include "util_config.h"
 #undef min
 #undef max
 
@@ -188,12 +189,12 @@ static bool uniqueCkptFilenames = false;
  * then both theCheckpointInterval and theDefaultCheckpointInterval are set.
  * A value of '0' means:  never checkpoint (manual checkpoint only).
  */
-static uint32_t theCheckpointInterval = 0; /* Current checkpoint interval */
+static uint32_t theCheckpointInterval[CKPT_GLOBAL+1];
 static uint32_t theDefaultCheckpointInterval = 0; /* Reset to this on new comp.
                                                      */
 static bool timerExpired = false;
 
-static void resetCkptTimer();
+static void recomputeCkptTimings(uint32_t alarm_time = 0);
 
 const int STDIN_FD = fileno(stdin);
 
@@ -215,7 +216,19 @@ static string coordHostname;
 static struct in_addr localhostIPAddr;
 
 static char *tmpDir = NULL;
-static string ckptDir;
+static string ckptDir[CKPT_GLOBAL+1];
+static uint32_t ckptType;
+
+// restart info
+static RestartInfo *restartInfo = NULL;
+
+// vars to handle interval for multiple checkpoint types
+static uint32_t ckptTimeLeft[CKPT_GLOBAL+1];
+static uint32_t currentAlarmCkptType = CKPT_LOCAL;
+static uint32_t nextCkptType = CKPT_LOCAL;
+static uint32_t currentAlarmTime = 0;
+static uint32_t ckptTypeInProgress = CKPT_LOCAL;
+
 
 #define MAX_EVENTS 10000
 struct epoll_event events[MAX_EVENTS];
@@ -229,6 +242,8 @@ static pid_t _nextVirtualPid = INITIAL_VIRTUAL_PID;
 
 static int theNextClientNumber = 1;
 vector<CoordClient *>clients;
+
+static uint64_t getRealCurrTime();
 
 CoordClient::CoordClient(const jalib::JSocket &sock,
                          const struct sockaddr_storage *addr,
@@ -289,6 +304,8 @@ DmtcpCoordinator::handleUserCommand(char cmd, DmtcpMessage *reply /*= NULL*/)
     reply->coordCmdStatus = CoordCmdStatus::NOERROR;
   }
 
+  uint32_t intvl;
+
   switch (cmd) {
   case 'b':  // prefix blocking command, prior to checkpoint command
     JTRACE("blocking checkpoint beginning...");
@@ -298,8 +315,15 @@ DmtcpCoordinator::handleUserCommand(char cmd, DmtcpMessage *reply /*= NULL*/)
     JTRACE("Will kill peers after creating the checkpoint...");
     killAfterCkptOnce = true;
     break;
+  case 'd':
+    ckptType = CKPT_GLOBAL;
+    break;
+  case 'e':
+    ckptType = CKPT_LOCAL;
+    break;
   case 'c':
     JTRACE("checkpointing...");
+    nextCkptType = ckptType;
     if (startCheckpoint()) {
       if (reply != NULL) {
         reply->numPeers = getStatus().numPeers;
@@ -312,19 +336,8 @@ DmtcpCoordinator::handleUserCommand(char cmd, DmtcpMessage *reply /*= NULL*/)
     break;
   case 'i':
     JTRACE("setting checkpoint interval...");
-    updateCheckpointInterval(theCheckpointInterval);
-    if (theCheckpointInterval == 0) {
-      printf("Current Checkpoint Interval:"
-             " Disabled (checkpoint manually instead)\n");
-    } else {
-      printf("Current Checkpoint Interval: %d\n", theCheckpointInterval);
-    }
-    if (theDefaultCheckpointInterval == 0) {
-      printf("Default Checkpoint Interval:"
-             " Disabled (checkpoint manually instead)\n");
-    } else {
-      printf("Default Checkpoint Interval: %d\n", theDefaultCheckpointInterval);
-    }
+    intvl = theCheckpointInterval[ckptType];
+    updateCheckpointInterval(intvl);
     break;
   case 'l':
   case 't':
@@ -383,7 +396,8 @@ DmtcpCoordinator::handleUserCommand(char cmd, DmtcpMessage *reply /*= NULL*/)
     if (reply != NULL) {
       reply->numPeers = s.numPeers;
       reply->isRunning = running;
-      reply->theCheckpointInterval = theCheckpointInterval;
+      // FIXME: cannot send multiple intervals in one variable...
+      reply->theCheckpointInterval = theCheckpointInterval[CKPT_LOCAL];
     } else {
       printStatus(s.numPeers, running);
     }
@@ -414,12 +428,17 @@ DmtcpCoordinator::writeStatusToFile()
     << " (" << inet_ntoa(localhostIPAddr) << ")" << std::endl
     << "Port: " << thePort << std::endl
     << "PID: " << getpid() << std::endl
-    << "Checkpoint Interval: ";
+    << "Checkpoint Interval: " << std::endl;
 
-  if (theCheckpointInterval == 0) {
-    o << "disabled (checkpoint manually instead)" << std::endl;
-  } else {
-    o << theCheckpointInterval << std::endl;
+  int i;
+  for (i = 0; i <= CKPT_GLOBAL; i++){
+    if(theCheckpointInterval[i] == 0){
+      o << "  Checkpoint level " << i << " disabled" << std::endl;
+    }
+    else {
+      o << "  Checkpoint level " << i << " interval: "
+        << theCheckpointInterval[i] << std::endl;
+    }
   }
 
   o.close();
@@ -436,10 +455,15 @@ DmtcpCoordinator::printStatus(size_t numPeers, bool isRunning)
     << "Port: " << thePort << std::endl
     << "Checkpoint Interval: ";
 
-  if (theCheckpointInterval == 0) {
-    o << "disabled (checkpoint manually instead)" << std::endl;
-  } else {
-    o << theCheckpointInterval << std::endl;
+  int i;
+  for (i = 0; i <= CKPT_GLOBAL; i++){
+    if(theCheckpointInterval[i] == 0){
+      o << "  Checkpoint level " << i << " disabled" << std::endl;
+    }
+    else {
+      o << "  Checkpoint level " << i << " interval: "
+        << theCheckpointInterval[i] << std::endl;
+    }
   }
 
   o << "Exit on last client: " << exitOnLast << std::endl
@@ -447,9 +471,13 @@ DmtcpCoordinator::printStatus(size_t numPeers, bool isRunning)
 
     // << "Kill after checkpoint (first time only): " << killAfterCkptOnce
     // << std::endl
-    << "Computation Id: " << compId << std::endl
-    << "Checkpoint Dir: " << ckptDir << std::endl
-    << "NUM_PEERS=" << numPeers << std::endl
+    << "Computation Id: " << compId << std::endl;
+
+  for (i = 0; i <= CKPT_GLOBAL; i++){
+    o << "Checkpoint Dir type " << i  << ": " << ckptDir[i] << std::endl;
+  }
+
+  o << "NUM_PEERS=" << numPeers << std::endl
     << "RUNNING=" << (isRunning ? "yes" : "no") << std::endl;
   printf("%s", o.str().c_str());
   fflush(stdout);
@@ -552,12 +580,14 @@ DmtcpCoordinator::recordCkptFilename(CoordClient *client, const char *extraData)
   }
   _numRestartFilenames++;
 
+
+  // FIXME: be sure that this is correct behavior
   if (_numRestartFilenames == _numCkptWorkers) {
     const string restartScriptPath =
-      RestartScript::writeScript(ckptDir,
+      RestartScript::writeScript(ckptDir[ckptTypeInProgress],
                                  uniqueCkptFilenames,
                                  ckptTimeStamp,
-                                 theCheckpointInterval,
+                                 theCheckpointInterval[ckptTypeInProgress],
                                  thePort,
                                  compId,
                                  _restartFilenames,
@@ -591,6 +621,17 @@ DmtcpCoordinator::recordCkptFilename(CoordClient *client, const char *extraData)
     }
     _numRestartFilenames = 0;
     _numCkptWorkers = 0;
+
+    if(restartInfo == NULL){
+      restartInfo = new RestartInfo();
+    }
+
+    // update restart info with new checkpoint
+    restartInfo->update(ckptDir[ckptTypeInProgress],
+                        ckptTypeInProgress, getRealCurrTime());
+
+    // write new restartinfo
+    restartInfo->writeRestartInfo();
 
     // All the workers have checkpointed so now it is safe to reset this flag.
     workersRunningAndSuspendMsgSent = false;
@@ -646,21 +687,57 @@ DmtcpCoordinator::onData(CoordClient *client)
     recordCkptFilename(client, extraData);
     break;
 
-  case DMT_GET_CKPT_DIR:
+  case DMT_GET_GLOBAL_CKPT_DIR:
   {
-    DmtcpMessage reply(DMT_GET_CKPT_DIR_RESULT);
-    reply.extraBytes = ckptDir.length() + 1;
+    DmtcpMessage reply(DMT_GET_GLOBAL_CKPT_DIR_RESULT);
+    reply.extraBytes = ckptDir[CKPT_GLOBAL].length() + 1;
     client->sock() << reply;
-    client->sock().writeAll(ckptDir.c_str(), reply.extraBytes);
+    client->sock().writeAll(ckptDir[CKPT_GLOBAL].c_str(), reply.extraBytes);
     break;
   }
-  case DMT_UPDATE_CKPT_DIR:
+  case DMT_GET_LOCAL_CKPT_DIR:
+  {
+    DmtcpMessage reply(DMT_GET_LOCAL_CKPT_DIR_RESULT);
+    reply.extraBytes = ckptDir[CKPT_LOCAL].length() + 1;
+    client->sock() << reply;
+    client->sock().writeAll(ckptDir[CKPT_LOCAL].c_str(), reply.extraBytes);
+    break;
+  }
+  case DMT_GET_PARTNER_CKPT_DIR:
+  {
+    DmtcpMessage reply(DMT_GET_PARTNER_CKPT_DIR_RESULT);
+    reply.extraBytes = ckptDir[CKPT_PARTNER].length() + 1;
+    client->sock() << reply;
+    client->sock().writeAll(ckptDir[CKPT_PARTNER].c_str(), reply.extraBytes);
+    break;
+  }
+  case DMT_UPDATE_GLOBAL_CKPT_DIR:
   {
     JASSERT(extraData != 0)
-    .Text("extra data expected with DMT_UPDATE_CKPT_DIR message");
-    if (strcmp(ckptDir.c_str(), extraData) != 0) {
-      ckptDir = extraData;
-      JNOTE("Updated ckptDir") (ckptDir);
+    .Text("extra data expected with DMT_UPDATE_GLOBAL_CKPT_DIR message");
+    if (strcmp(ckptDir[CKPT_GLOBAL].c_str(), extraData) != 0) {
+      ckptDir[CKPT_GLOBAL] = extraData;
+      JNOTE("Updated ckptDirGlobal") (ckptDir[CKPT_GLOBAL]);
+    }
+    break;
+  }
+  case DMT_UPDATE_LOCAL_CKPT_DIR:
+  {
+    JASSERT(extraData != 0)
+    .Text("extra data expected with DMT_UPDATE_LOCAL_CKPT_DIR message");
+    if (strcmp(ckptDir[CKPT_LOCAL].c_str(), extraData) != 0) {
+      ckptDir[CKPT_LOCAL] = extraData;
+      JNOTE("Updated ckptDirLocal") (ckptDir[CKPT_LOCAL]);
+    }
+    break;
+  }
+  case DMT_UPDATE_PARTNER_CKPT_DIR:
+  {
+    JASSERT(extraData != 0)
+    .Text("extra data expected with DMT_UPDATE_PARTNER_CKPT_DIR message");
+    if (strcmp(ckptDir[CKPT_PARTNER].c_str(), extraData) != 0) {
+      ckptDir[CKPT_PARTNER] = extraData;
+      JNOTE("Updated ckptDirPartner") (ckptDir[CKPT_PARTNER]);
     }
     break;
   }
@@ -815,10 +892,13 @@ DmtcpCoordinator::onDisconnect(CoordClient *client)
     // thus we need to reset it to false once all the processes in the
     // computations have disconnected.
     killInProgress = false;
-    if (theCheckpointInterval != theDefaultCheckpointInterval) {
-      updateCheckpointInterval(theDefaultCheckpointInterval);
-      JNOTE("CheckpointInterval reset on end of current computation")
-        (theCheckpointInterval);
+    int i;
+    for (i = 0; i <= CKPT_GLOBAL; i++){
+      if(theCheckpointInterval[i] != theDefaultCheckpointInterval){
+        ckptType = i;
+        updateCheckpointInterval(theDefaultCheckpointInterval);
+        JNOTE("CheckpointInterval reset on end of current computation");
+      }
     }
   } else {
     // If the coordinator waits at currentBarrier, try to release it.
@@ -1031,6 +1111,15 @@ getCurrTimestamp()
   return nsecs;
 }
 
+static uint64_t
+getRealCurrTime()
+{
+  struct timeval time;
+  uint64_t microsec = 0;
+  JASSERT(gettimeofday(&time, NULL) == 0);
+  microsec = time.tv_sec*1000000L + time.tv_usec;
+  return microsec;
+}
 
 bool
 DmtcpCoordinator::validateRestartingWorkerProcess(
@@ -1211,6 +1300,8 @@ DmtcpCoordinator::startCheckpoint()
   ComputationStatus s = getStatus();
   if (s.minimumState == WorkerState::RUNNING && s.minimumStateUnanimous
       && !workersRunningAndSuspendMsgSent) {
+    printf("Starting checkpoint of type %d\n", nextCkptType);
+    fflush(stdout);
     uniqueCkptFilenames = false;
     time(&ckptTimeStamp);
     JTIMER_START(checkpoint);
@@ -1223,8 +1314,11 @@ DmtcpCoordinator::startCheckpoint()
     JNOTE("starting checkpoint; incrementing generation; suspending all nodes")
       (s.numPeers) (compId.computationGeneration());
 
+    // set ckpt type in progress
+    ckptTypeInProgress = nextCkptType;
+
     // Pass number of connected peers to all clients
-    broadcastMessage(DMT_DO_CHECKPOINT);
+    broadcastMessage(DMT_DO_CHECKPOINT, sizeof(uint32_t), &ckptTypeInProgress);
     // On worker side, after receiving DMT_DO_CHECKPOINT, the plugin manager
     // sends out DMTCP_EVENT_PRESUSPEND followed by DMTCP_EVENT_CHECKPOINT
     // to each plugin.  The callbacks for those events may call
@@ -1320,11 +1414,17 @@ signalHandler(int signum)
   if (signum == SIGINT) {
     prog.handleUserCommand('q');
   } else if (signum == SIGALRM) {
+    // set correct checkpoint type
+    printf("Alarm expired! Time for checkpoint of type %d\n",
+            currentAlarmCkptType);
+    fflush(stdout);
+    nextCkptType = currentAlarmCkptType;
     timerExpired = true;
     if (timeout &&
         (time(NULL) - start_time) >= (timeout - 1)) { // -1 for roundoff
       exit(1);
     }
+    recomputeCkptTimings(currentAlarmTime);
   } else {
     JASSERT(false).Text("Not reached");
   }
@@ -1446,14 +1546,43 @@ calcLocalAddr()
   coordHostname = hostname;
 }
 
-static void
-resetCkptTimer()
+tatic void
+recomputeCkptTimings(uint32_t alarm_time)
 {
-  if (theCheckpointInterval > 0) {
-    alarm(theCheckpointInterval);
-  } else {
-    alarm(timeout);
+  int i, chosenType = -1;
+  // logic to setup alarm with several intervals
+  if(alarm_time == 0){
+    for (i = 0; i <= CKPT_GLOBAL; i++){
+      ckptTimeLeft[i] = theCheckpointInterval[i];
+    }
   }
+  else {
+    // update times
+    for (i = 0; i <= CKPT_GLOBAL; i++){
+        ckptTimeLeft[i] -= alarm_time;
+        if (ckptTimeLeft[i] <= 0){
+          ckptTimeLeft[i] = theCheckpointInterval[i];
+        }
+      }
+  }
+
+  // prioritize higher level
+  for (i = CKPT_GLOBAL; i >= 0; i--){
+    if (chosenType == -1 ||
+        ckptTimeLeft[chosenType] == 0 ||
+        (ckptTimeLeft[chosenType] > ckptTimeLeft[i] &&
+         ckptTimeLeft[i] != 0)){
+           chosenType = i;
+    }
+  }
+
+  currentAlarmTime = ckptTimeLeft[chosenType];
+  currentAlarmCkptType = chosenType;
+
+  printf("Setting alarm in %d seconds of ckpt type %d.\n",
+          currentAlarmTime, currentAlarmCkptType);
+  fflush(stdout);
+  alarm(currentAlarmTime);
 }
 
 void
@@ -1461,17 +1590,20 @@ DmtcpCoordinator::updateCheckpointInterval(uint32_t interval)
 {
   static bool firstClient = true;
 
+  uint32_t ckpt_interval = theCheckpointInterval[ckptType];
+
   if ((interval != DMTCPMESSAGE_SAME_CKPT_INTERVAL &&
-       interval != theCheckpointInterval) ||
+       interval != ckpt_interval) ||
       firstClient) {
-    int oldInterval = theCheckpointInterval;
+    int oldInterval = ckpt_interval;
     if (interval != DMTCPMESSAGE_SAME_CKPT_INTERVAL) {
-      theCheckpointInterval = interval;
+      theCheckpointInterval[ckptType] = interval;
+      JNOTE("CheckpointInterval updated (for this computation only)")
+         (oldInterval) (theCheckpointInterval[ckptType]) (ckptType);
     }
-    JNOTE("CheckpointInterval updated (for this computation only)")
-      (oldInterval) (theCheckpointInterval);
+
     firstClient = false;
-    resetCkptTimer();
+    recomputeCkptTimings();
   }
 }
 
@@ -1680,6 +1812,13 @@ main(int argc, char **argv)
     logFilename = getenv(ENV_VAR_COORD_LOGFILE);
   }
 
+  // initialize intervals
+  int i;
+  for (i = 0; i <= CKPT_GLOBAL; i++){
+    theCheckpointInterval[i] = theDefaultCheckpointInterval;
+    ckptTimeLeft[i] = 0;
+  }
+
   shift;
   while (argc > 0) {
     string s = argv[0];
@@ -1732,8 +1871,21 @@ main(int argc, char **argv)
     } else if (argc > 1 && s == "--status-file") {
       theStatusFile = argv[1];
       shift; shift;
-    } else if (argc > 1 && (s == "-c" || s == "--ckptdir")) {
-      setenv(ENV_VAR_CHECKPOINT_DIR, argv[1], 1);
+    } else if (argc > 1 && (s == "-cg" || s == "--ckptdir-global")) {
+      setenv(ENV_VAR_GLOBAL_CKPT_DIR, argv[1], 1);
+      shift; shift;
+    } else if (argc > 1 && (s == "-cl" || s == "--ckptdir-local")) {
+      setenv(ENV_VAR_LOCAL_CKPT_DIR, argv[1], 1);
+      shift; shift;
+    } else if (argc > 1 && s == "--config") {
+      ConfigInfo conf = ConfigInfo();
+      conf.readConfigFromFile(std::string(argv[1]));
+      setenv(ENV_VAR_LOCAL_CKPT_DIR, conf.localCkptDir.c_str(), 1);
+      setenv(ENV_VAR_GLOBAL_CKPT_DIR, conf.globalCkptDir.c_str(), 1);
+      theCheckpointInterval[CKPT_LOCAL] = conf.localInterval;
+      theCheckpointInterval[CKPT_PARTNER] = conf.partnerInterval;
+      theCheckpointInterval[CKPT_SOLOMON] = conf.solomonInterval;
+      theCheckpointInterval[CKPT_GLOBAL] = conf.globalInterval;
       shift; shift;
     } else if (argc > 1 && (s == "-t" || s == "--tmpdir")) {
       tmpdir_arg = argv[1];
@@ -1768,11 +1920,19 @@ main(int argc, char **argv)
 
   calcLocalAddr();
 
-  if (getenv(ENV_VAR_CHECKPOINT_DIR) != NULL) {
-    ckptDir = getenv(ENV_VAR_CHECKPOINT_DIR);
-  } else {
-    ckptDir = get_current_dir_name();
-  }
+  JASSERT(getenv(ENV_VAR_GLOBAL_CKPT_DIR) != NULL)
+    .Text("Global checkpoint location needs to be defined.");
+  JASSERT(getenv(ENV_VAR_LOCAL_CKPT_DIR) != NULL)
+    .Text("Local checkpoint location needs to be defined.");
+
+  // set all types of checkpoint dirs based on local and global locations
+  ckptDir[CKPT_LOCAL] = getenv(ENV_VAR_LOCAL_CKPT_DIR);
+  ckptDir[CKPT_PARTNER] = getenv(ENV_VAR_LOCAL_CKPT_DIR);
+  ckptDir[CKPT_PARTNER] += "/partner/";
+  ckptDir[CKPT_SOLOMON] = getenv(ENV_VAR_LOCAL_CKPT_DIR);
+  ckptDir[CKPT_SOLOMON] += "/solomon/";
+  ckptDir[CKPT_GLOBAL] = getenv(ENV_VAR_GLOBAL_CKPT_DIR);
+  ckptType = CKPT_LOCAL;
 
   /*Test if the listener socket is already open*/
   if (fcntl(PROTECTED_COORD_FD, F_GETFD) != -1) {
@@ -1797,13 +1957,6 @@ main(int argc, char **argv)
   }
   JTRACE("Listening on port")(thePort);
 
-  // parse checkpoint interval
-  const char *interval = getenv(ENV_VAR_CKPT_INTR);
-  if (interval != NULL) {
-    theDefaultCheckpointInterval = jalib::StringToInt(interval);
-    theCheckpointInterval = theDefaultCheckpointInterval;
-  }
-
 #if 0
   if (!quiet) {
     JASSERT_STDERR <<
@@ -1825,10 +1978,15 @@ main(int argc, char **argv)
                     "\n    Port: %d"
                     "\n    Checkpoint Interval: ",
             coordHostname.c_str(), inet_ntoa(localhostIPAddr), thePort);
-    if (theCheckpointInterval == 0) {
-      fprintf(stderr, "disabled (checkpoint manually instead)");
-    } else {
-      fprintf(stderr, "%d", theCheckpointInterval);
+    int i;
+    for (i = 0; i <= CKPT_GLOBAL; i++){
+      if(theCheckpointInterval[i] == 0){
+        fprintf(stderr, "Checkpoint level %d disabled\n", i);
+      }
+      else {
+        fprintf(stderr, "Checkpoint level %d interval: %d\n", i,
+                theCheckpointInterval[i]);
+      }
     }
     fprintf(stderr, "\n    Exit on last client: %d\n", exitOnLast);
   }

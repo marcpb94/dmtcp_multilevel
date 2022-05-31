@@ -71,6 +71,7 @@ main(int argc, char **argv)
 {
   string interval = "";
   string request = "h";
+  char ckpt_type = 0;
 
   initializeJalib();
 
@@ -102,6 +103,12 @@ main(int argc, char **argv)
     } else if (s == "h" || s == "-h" || s == "--help" || s == "?") {
       fprintf(stderr, theUsage, "");
       return 1;
+    } else if (s == "--global"){
+      ckpt_type = 'd';
+      shift;
+    } else if (s == "--local"){
+      ckpt_type = 'e';
+      shift;
     } else { // else it's a request
       char *cmd = argv[0];
 
@@ -143,6 +150,7 @@ main(int argc, char **argv)
   }
 
   int coordCmdStatus = CoordCmdStatus::NOERROR;
+  int coordCmdStatus2 = CoordCmdStatus::NOERROR;
   int numPeers;
   int isRunning;
   int ckptInterval;
@@ -154,6 +162,13 @@ main(int argc, char **argv)
     return 1;
 
   case 'i':
+    if (ckpt_type == 'd' || ckpt_type == 'e'){
+      CoordinatorAPI::connectAndSendUserCommand(ckpt_type, &coordCmdStatus2);
+      if (coordCmdStatus2 != CoordCmdStatus::NOERROR) {
+        fprintf(stderr, "Error sending checkpoint type to coordinator.\n");
+        return 2;
+      }
+    }
     setenv(ENV_VAR_CKPT_INTR, interval.c_str(), 1);
     CoordinatorAPI::connectAndSendUserCommand(*cmd, &coordCmdStatus);
     printf("Interval changed to %s\n", interval.c_str());
@@ -179,6 +194,14 @@ main(int argc, char **argv)
       CoordinatorAPI::connectAndSendUserCommand(*cmd, &coordCmdStatus);
     break;
   case 'c':
+    if (ckpt_type == 'd' || ckpt_type == 'e'){
+      CoordinatorAPI::connectAndSendUserCommand(ckpt_type, &coordCmdStatus2);
+      if (coordCmdStatus2 != CoordCmdStatus::NOERROR) {
+        fprintf(stderr, "Error sending checkpoint type to coordinator.\n");
+        return 2;
+      }
+    }
+    // fall
   case 'k':
   case 'q':
     workerList =

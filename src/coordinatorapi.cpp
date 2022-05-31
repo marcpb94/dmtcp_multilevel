@@ -352,7 +352,7 @@ connectAndSendUserCommand(char c,
 }
 
 string
-getCoordCkptDir(void)
+getCoordCkptDir(int ckpt_type)
 {
   // FIXME: Add a test for make-check.
   char buf[PATH_MAX] = { 0 };
@@ -360,13 +360,30 @@ getCoordCkptDir(void)
   if (noCoordinator()) {
     return "";
   }
-  DmtcpMessage msg(DMT_GET_CKPT_DIR);
+
+  dmtcp::DmtcpMessageType msg_type, msg_result;
+  switch (ckpt_type){
+    case CKPT_LOCAL:
+      msg_type = DMT_GET_LOCAL_CKPT_DIR;
+      msg_result = DMT_GET_LOCAL_CKPT_DIR_RESULT;
+      break;
+    case CKPT_PARTNER:
+      msg_type = DMT_GET_PARTNER_CKPT_DIR;
+      msg_result = DMT_GET_PARTNER_CKPT_DIR_RESULT;
+      break;
+    case CKPT_GLOBAL:
+      msg_type = DMT_GET_GLOBAL_CKPT_DIR;
+      msg_result = DMT_GET_GLOBAL_CKPT_DIR_RESULT;
+      break;
+    default:
+      JASSERT(false)(ckpt_type).Text("Unknown checkpoint type.");
+  }
   sendMsgToCoordinator(msg);
 
   char *extraData = NULL;
   recvMsgFromCoordinator(&msg, (void **)&extraData);
   msg.assertValid();
-  JASSERT(msg.type == DMT_GET_CKPT_DIR_RESULT) (msg.type);
+  JASSERT(msg.type == msg_result) (msg.type);
 
   JASSERT(msg.extraBytes > 0 && msg.extraBytes < PATH_MAX);
   strcpy(buf, extraData);
@@ -375,13 +392,27 @@ getCoordCkptDir(void)
 }
 
 void
-updateCoordCkptDir(const char *dir)
+updateCoordCkptDir(const char *dir, int ckpt_type)
 {
   if (noCoordinator()) {
     return;
   }
   JASSERT(dir != NULL);
-  DmtcpMessage msg(DMT_UPDATE_CKPT_DIR);
+  dmtcp::DmtcpMessageType msg_type;
+  switch (ckpt_type){
+    case CKPT_LOCAL:
+      msg_type = DMT_UPDATE_LOCAL_CKPT_DIR;
+      break;
+    case CKPT_PARTNER:
+      msg_type = DMT_UPDATE_PARTNER_CKPT_DIR;
+      break;
+    case CKPT_GLOBAL:
+      msg_type = DMT_UPDATE_GLOBAL_CKPT_DIR;
+      break;
+    default:
+      JASSERT(false)(ckpt_type).Text("Unknown checkpoint type.");
+  }
+  DmtcpMessage msg(msg_type);
   sendMsgToCoordinator(msg, dir, strlen(dir) + 1);
 }
 
