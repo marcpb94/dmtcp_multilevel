@@ -1,0 +1,8 @@
+dmtcp_command: 
+	- add partner and solomon manual checkpoints
+	
+coordinatorapi:
+	- add solomon request to DmtcpMessage
+	
+general:
+	- only write restartinfo after post-ckpt is also done
