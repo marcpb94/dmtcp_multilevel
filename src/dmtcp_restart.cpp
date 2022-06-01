@@ -41,6 +41,8 @@
 #include "shareddata.h"
 #include "uniquepid.h"
 #include "util.h"
+#include "util_config.h"
+#include "util_mpi.h"
 
 #define BINARY_NAME         "dmtcp_restart"
 #define MTCP_RESTART_BINARY "mtcp_restart"
@@ -715,6 +717,8 @@ int
 main(int argc, char **argv)
 {
   char *tmpdir_arg = NULL;
+  ConfigInfo conf = ConfigInfo();
+  conf.globalCkptDir = "<NOT SET>";
 
   initializeJalib();
 
@@ -724,10 +728,6 @@ main(int argc, char **argv)
 
   if (getenv(ENV_VAR_DISABLE_STRICT_CHECKING)) {
     noStrictChecking = true;
-  }
-
-  if (getenv(ENV_VAR_CHECKPOINT_DIR)) {
-    ckptdir_arg = getenv(ENV_VAR_CHECKPOINT_DIR);
   }
 
   if (argc == 1) {
@@ -798,6 +798,9 @@ main(int argc, char **argv)
     } else if (argc > 1 && (s == "-r" || s == "--restartdir")) {
       restartDir = string(argv[1]);
       shift; shift;
+    } else if (argc > 1 && s == "--config") {
+      conf->readConfigFromFile(std::string(argv[1]));
+      shift; shift;
     } else if (argc > 1 && (s == "--gdb")) {
       requestedDebugLevel = atoi(argv[1]);
       shift; shift;
@@ -820,6 +823,13 @@ main(int argc, char **argv)
     } else {
       break; // argv[0] is first ckpt file to be restored; finish parsing later
     }
+  }
+
+  // if restartDir not specified, perform recovery procedure
+  if (restartDir.empty()){
+    JASSERT(conf.globalCkptDir != "<NOT SET>")
+      .Text("No restartdir or config file specified.");
+    restartDir = UtilsMPI::instance().recoverFromCrash(&conf);
   }
 
   if ((getenv(ENV_VAR_NAME_PORT) == NULL ||

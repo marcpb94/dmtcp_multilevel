@@ -29,6 +29,7 @@
 #include "shareddata.h"
 #include "syscallwrappers.h"
 #include "util.h"
+#include "util_config.h"
 
 #define BINARY_NAME "dmtcp_launch"
 
@@ -302,8 +303,18 @@ processArgs(int *orig_argc, const char ***orig_argv)
     } else if (argc > 1 && s == "--port-file") {
       thePortFile = argv[1];
       shift; shift;
-    } else if (argc > 1 && (s == "-c" || s == "--ckptdir")) {
-      setenv(ENV_VAR_CHECKPOINT_DIR, argv[1], 1);
+    } else if (argc > 1 && (s == "-cg" || s == "--ckptdir-global")) {
+      setenv(ENV_VAR_GLOBAL_CKPT_DIR, argv[1], 1);
+      shift; shift;
+    } else if (argc > 1 && (s == "-cl" || s == "--ckptdir-local")) {
+      setenv(ENV_VAR_LOCAL_CKPT_DIR, argv[1], 1);
+      shift; shift;
+    } else if (argc > 1 && s == "--config") {
+      ConfigInfo cfg = ConfigInfo();
+      cfg.readConfigFromFile(std::string(argv[1]));
+      setenv(ENV_VAR_LOCAL_CKPT_DIR, cfg.localCkptDir.c_str(), 1);
+      setenv(ENV_VAR_GLOBAL_CKPT_DIR, cfg.globalCkptDir.c_str(), 1);
+      setenv(ENV_VAR_CONFIG_FILE, argv[1], 1);
       shift; shift;
     } else if (argc > 1 && (s == "-t" || s == "--tmpdir")) {
       tmpdir_arg = argv[1];
@@ -508,19 +519,10 @@ main(int argc, const char **argv)
     JTRACE("dmtcp_launch starting new program:")(argv[0]);
   }
 
-  // set up CHECKPOINT_DIR
-  if (getenv(ENV_VAR_CHECKPOINT_DIR) == NULL) {
-    const char *ckptDir = get_current_dir_name();
-    if (ckptDir != NULL) {
-      // copy to private buffer
-      static string _buf = ckptDir;
-      ckptDir = _buf.c_str();
-    } else {
-      ckptDir = ".";
-    }
-    setenv(ENV_VAR_CHECKPOINT_DIR, ckptDir, 0);
-    JTRACE("setting " ENV_VAR_CHECKPOINT_DIR)(ckptDir);
-  }
+  JASSERT(getenv(ENV_VAR_GLOBAL_CKPT_DIR) != NULL)
+    .Text("Global checkpoint location needs to be defined.");
+  JASSERT(getenv(ENV_VAR_LOCAL_CKPT_DIR) != NULL)
+    .Text("Local checkpoint location needs to be defined.");
 
   if (checkpointOpenFiles) {
     setenv(ENV_VAR_CKPT_OPEN_FILES, "1", 0);

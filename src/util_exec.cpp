@@ -614,7 +614,8 @@ Util::getDmtcpArgs(void)
   const char *deltacompression = getenv(ENV_VAR_DELTACOMPRESSION);
 #endif // ifdef HBICT_DELTACOMP
   const char *ckptOpenFiles = getenv(ENV_VAR_CKPT_OPEN_FILES);
-  const char *ckptDir = getenv(ENV_VAR_CHECKPOINT_DIR);
+  const char *ckptDirGlobal = getenv(ENV_VAR_GLOBAL_CKPT_DIR);
+  const char *ckptDirLocal = getenv(ENV_VAR_LOCAL_CKPT_DIR);
   const char *tmpDir = getenv(ENV_VAR_TMPDIR);
   const char *plugins = getenv(ENV_VAR_PLUGIN);
 
@@ -636,9 +637,14 @@ Util::getDmtcpArgs(void)
     argVector.push_back(sigckpt);
   }
 
-  if (ckptDir != NULL) {
-    argVector.push_back("--ckptdir");
-    argVector.push_back(ckptDir);
+  if (ckptDirGlobal != NULL) {
+    dmtcp_args.push_back("--ckptdir-global");
+    dmtcp_args.push_back(ckptDirGlobal);
+  }
+
+  if (ckptDirLocal != NULL) {
+    dmtcp_args.push_back("--ckptdir-local");
+    dmtcp_args.push_back(ckptDirLocal);
   }
 
   if (tmpDir != NULL) {

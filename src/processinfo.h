@@ -25,6 +25,8 @@
 #include <sys/types.h>
 #include "../jalib/jalloc.h"
 #include "uniquepid.h"
+#include "constants.h"
+#include "util_config.h"
 
 #define MB                 1024 * 1024
 #define RESTORE_STACK_SIZE 16 * MB
@@ -138,16 +140,26 @@ class ProcessInfo
                             uint64_t f3, uint64_t f4);
     uint64_t endOfStack(void) const { return _endOfStack; }
 
-    string getCkptFilename() const { return _ckptFileName; }
-    string getTempCkptFilename() const { return _ckptFileName + ".temp"; }
+    string getCkptFilename();
+    string getTempCkptFilename() const { return getCkptFilename() + ".temp"; }
 
-    string getCkptFilesSubDir() const { return _ckptFilesSubDir; }
+    string getCkptFilesSubDir();
 
-    string getCkptDir() const { return _ckptDir; }
+    string getCkptDir();
 
     void setCkptDir(const char *);
     void setCkptFilename(const char *);
     void updateCkptDirFileSubdir(string newCkptDir = "");
+    uint32_t getCkptType(void) const { return _ckptType; }
+    void setCkptType(int ckpt_type) { _ckptType = ckpt_type; }
+    ConfigInfo *getConfig(void) const { return _cfg; }
+    void setConfig(ConfigInfo *cfg) { _cfg = cfg; }
+    void setTopology(Topology *topo);
+    int getNumNodes() const { return _topo->numNodes; }
+    char *getNameList() const { return _topo->nameList; }
+    int *getNodeMap() const { return _topo->nodeMap; }
+    int *getPartnerMap() const { return _topo->partnerMap; }
+    Topology *getTopology() const { return _topo; }
 
     void addKeyValuePairToCkptHeader(const string &key, const string &value);
     const string& getValue(const string &key);
@@ -186,9 +198,18 @@ class ProcessInfo
     string _launchCWD;
     string _ckptCWD;
 
-    string _ckptDir;
-    string _ckptFileName;
-    string _ckptFilesSubDir;
+    // configuration
+    ConfigInfo *_cfg;
+
+    // topology information
+    Topology *_topo;
+
+    // used for determining which ckpt location to use
+    uint32_t _ckptType;
+
+    string _ckptDir[CKPT_GLOBAL+1];
+    string _ckptFileName[CKPT_GLOBAL+1];
+    string _ckptFilesSubDir[CKPT_GLOBAL+1];
 
     UniquePid _upid;
     UniquePid _uppid;

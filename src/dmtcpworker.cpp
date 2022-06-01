@@ -378,7 +378,8 @@ DmtcpWorker::waitForPreSuspendMessage()
   JTRACE("waiting for CHECKPOINT message");
 
   DmtcpMessage msg;
-  CoordinatorAPI::recvMsgFromCoordinator(&msg);
+  void *extraData = NULL;
+  CoordinatorAPI::recvMsgFromCoordinator(&msg, &extraData);
 
   // Before validating message; make sure we are not exiting.
   if (exitInProgress) {
@@ -394,6 +395,14 @@ DmtcpWorker::waitForPreSuspendMessage()
   SharedData::updateGeneration(msg.compGroup.computationGeneration());
   JASSERT(SharedData::getCompId() == msg.compGroup.upid())
     (SharedData::getCompId()) (msg.compGroup);
+
+  JASSERT(extraData != NULL);
+
+  // get type of checkpoint from extra bytes
+  uint32_t ckpt_type = *((uint32_t *) extraData);
+  ProcessInfo::instance().setCkptType(ckpt_type);
+
+  JALLOC_HELPER_FREE(extraData);
 
   ProcessInfo::instance().compGroup(SharedData::getCompId());
   exitAfterCkpt = msg.exitAfterCkpt;
