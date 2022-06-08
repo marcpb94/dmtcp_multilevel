@@ -799,7 +799,7 @@ main(int argc, char **argv)
       restartDir = string(argv[1]);
       shift; shift;
     } else if (argc > 1 && s == "--config") {
-      conf->readConfigFromFile(std::string(argv[1]));
+      conf.readConfigFromFile(std::string(argv[1]));
       shift; shift;
     } else if (argc > 1 && (s == "--gdb")) {
       requestedDebugLevel = atoi(argv[1]);
