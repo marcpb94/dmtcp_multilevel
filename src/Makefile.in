@@ -194,6 +194,11 @@ am____d_bindir__dmtcp_restart_SOURCES_DIST = dmtcp_restart.cpp \
 @CONFIG_MANA_HELPER_DIR_TRUE@am__objects_1 =  \
 @CONFIG_MANA_HELPER_DIR_TRUE@	dmtcp_restart_plugin.$(OBJEXT)
 am___d_bindir__dmtcp_restart_OBJECTS = dmtcp_restart.$(OBJEXT) \
+	util_mpi.$(OBJEXT) gf_w4.$(OBJEXT) \
+	gf_w8.$(OBJEXT) gf_w16.$(OBJEXT) gf_w32.$(OBJEXT) \
+	gf_w64.$(OBJEXT) gf_w128.$(OBJEXT) jerasure.$(OBJEXT) \
+	galois.$(OBJEXT) gf.$(OBJEXT) gf_cpu.$(OBJEXT) \
+	gf_wgen.$(OBJEXT) util_misc.$(OBJEXT) \
 	$(am__objects_1)
 __d_bindir__dmtcp_restart_OBJECTS =  \
 	$(am___d_bindir__dmtcp_restart_OBJECTS)
@@ -210,7 +215,11 @@ am___d_libdir__libdmtcp_so_OBJECTS = alarm.$(OBJEXT) \
 	syslogwrappers.$(OBJEXT) terminal.$(OBJEXT) \
 	threadlist.$(OBJEXT) threadsync.$(OBJEXT) \
 	threadwrappers.$(OBJEXT) wrappers.$(OBJEXT) \
-	writeckpt.$(OBJEXT)
+	writeckpt.$(OBJEXT) util_mpi.$(OBJEXT) gf_w4.$(OBJEXT) \
+	gf_w8.$(OBJEXT) gf_w16.$(OBJEXT) gf_w32.$(OBJEXT) \
+	gf_w64.$(OBJEXT) gf_w128.$(OBJEXT) jerasure.$(OBJEXT) \
+	galois.$(OBJEXT) gf.$(OBJEXT) gf_cpu.$(OBJEXT) \
+	gf_wgen.$(OBJEXT)
 __d_libdir__libdmtcp_so_OBJECTS =  \
 	$(am___d_libdir__libdmtcp_so_OBJECTS)
 __d_libdir__libdmtcp_so_DEPENDENCIES = libdmtcpinternal.a libjalib.a \
@@ -680,14 +689,20 @@ __d_libdir__libdmtcp_so_SOURCES = alarm.cpp			\
 				  threadsync.cpp 		\
 				  threadwrappers.cpp 		\
 				  wrappers.cpp 			\
-				  writeckpt.cpp
+				  writeckpt.cpp			\
+				  util_mpi.cpp			\
+				  gf_w4.c gf_w8.c gf_w16.c	\
+				  gf_w32.c gf_w64.c gf_w128.c	\
+				  jerasure.c galois.c		\
+				  gf_cpu.c gf_wgen.c
 
 __d_libdir__libdmtcp_so_LDFLAGS = -shared -Xlinker -znow
 
 # Note that an ELF object uses libsyscallsreal.a or libnohijack.a
 #  but not both.  libnohijack.a has stub definitions for same symbols.
 __d_libdir__libdmtcp_so_LDADD = libdmtcpinternal.a libjalib.a \
-	libsyscallsreal.a -ldl -lpthread -lrt $(am__append_6)
+	libsyscallsreal.a -ldl -lpthread -lrt -lcrypto -ssl   \
+	$(am__append_6)
 __d_bindir__dmtcp_nocheckpoint_SOURCES = dmtcp_nocheckpoint.c
 __d_bindir__dmtcp_get_libc_offset_SOURCES = dmtcp_get_libc_offset.c
 __d_bindir__dmtcp_get_libc_offset_LDADD = -ldl
@@ -700,9 +715,13 @@ __d_bindir__dmtcp_coordinator_LDADD = libdmtcpinternal.a libjalib.a \
 __d_bindir__dmtcp_launch_SOURCES = dmtcp_launch.cpp
 __d_bindir__dmtcp_launch_LDADD = libdmtcpinternal.a libjalib.a \
 	libnohijack.a -lpthread -lrt -ldl $(am__append_3)
-__d_bindir__dmtcp_restart_SOURCES = dmtcp_restart.cpp $(am__append_7)
+__d_bindir__dmtcp_restart_SOURCES = dmtcp_restart.cpp util_mpi.cpp \
+	gf_w4.c gf_w8.c gf_w16.c gf_w32.c gf_w64.c gf_w128.c \
+	jerasure.c galois.c gf.c gf_cpu.c gf_wgen.c \
+	util_misc.cpp $(am__append_7)
 __d_bindir__dmtcp_restart_LDADD = libdmtcpinternal.a libjalib.a \
-	libnohijack.a -lpthread -lrt -ldl $(am__append_4)
+	libnohijack.a -lpthread -lrt -ldl -lmpi -lcrypto -lssl  \
+	$(am__append_4)
 __d_bindir__dmtcp_command_SOURCES = dmtcp_command.cpp
 __d_bindir__dmtcp_command_LDADD = libdmtcpinternal.a libjalib.a \
 	libnohijack.a -lpthread -lrt -ldl $(am__append_5)
