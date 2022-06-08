@@ -6,3 +6,6 @@ coordinatorapi:
 	
 general:
 	- only write restartinfo after post-ckpt is also done
+		- change coord and dmtcpworker/threadlist
+		- move notification of dmtcpworker::postCheckpoint
+		  to coord after the postprocessing is done

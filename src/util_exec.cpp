@@ -638,13 +638,13 @@ Util::getDmtcpArgs(void)
   }
 
   if (ckptDirGlobal != NULL) {
-    dmtcp_args.push_back("--ckptdir-global");
-    dmtcp_args.push_back(ckptDirGlobal);
+    argVector.push_back("--ckptdir-global");
+    argVector.push_back(ckptDirGlobal);
   }
 
   if (ckptDirLocal != NULL) {
-    dmtcp_args.push_back("--ckptdir-local");
-    dmtcp_args.push_back(ckptDirLocal);
+    argVector.push_back("--ckptdir-local");
+    argVector.push_back(ckptDirLocal);
   }
 
   if (tmpDir != NULL) {

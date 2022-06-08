@@ -615,7 +615,7 @@ ProcessInfo::setCkptFilename(const char *filename)
   }
 
   // set new values to arrays
-  ckptDir[_ckptType] = ckptDir;
+  _ckptDir[_ckptType] = ckptDir;
   _ckptFileName[_ckptType] = ckptFileName;
   _ckptFilesSubDir[_ckptType] = ckptFilesSubDir;
 }

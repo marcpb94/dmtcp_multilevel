@@ -378,6 +378,7 @@ getCoordCkptDir(int ckpt_type)
     default:
       JASSERT(false)(ckpt_type).Text("Unknown checkpoint type.");
   }
+  DmtcpMessage msg(msg_type);
   sendMsgToCoordinator(msg);
 
   char *extraData = NULL;

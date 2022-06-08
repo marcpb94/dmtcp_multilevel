@@ -529,7 +529,8 @@ DmtcpCoordinator::releaseBarrier(const string &barrier)
                      prevBarrier.c_str());
     if (status.minimumState == WorkerState::CHECKPOINTED) {
       JNOTE("Checkpoint complete; all workers running");
-      resetCkptTimer();
+      // FIXME: is this okay?
+      // resetCkptTimer();
     }
   }
 }
@@ -1546,7 +1547,7 @@ calcLocalAddr()
   coordHostname = hostname;
 }
 
-tatic void
+static void
 recomputeCkptTimings(uint32_t alarm_time)
 {
   int i, chosenType = -1;
