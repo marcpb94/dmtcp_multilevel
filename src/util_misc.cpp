@@ -31,6 +31,7 @@
 #include "protectedfds.h"
 #include "syscallwrappers.h"
 #include "util.h"
+#include "util_config.h"
 
 using namespace dmtcp;
 
@@ -685,4 +686,246 @@ Util::allowGdbDebug(int currentDebugLevel)
       sleep(3);
     }
   }
+}
+
+
+// default ConfigInfo values
+ConfigInfo::ConfigInfo() {
+  globalCkptDir = "";
+  localCkptDir = "";
+  globalInterval = 0;
+  solomonInterval = 0;
+  partnerInterval = 0;
+  localInterval = 0;
+  testMode = 0;
+  nodeSize = 1;
+  groupSize = 4;
+  encodeMaxThreads = 0;
+  encodeBlocksPerThread = 1;
+}
+
+
+void
+ConfigInfo::readConfigFromFile(std::string filename){
+  std::string line, option, value;
+  std::ifstream configFile(filename);
+  if(configFile.is_open()){
+    while (std::getline(configFile, line)){
+      // trim space on the left
+      while(line.length() > 0 && (line[0] == ' ' || line[0] == '\t')){
+        line.erase(0, 1);
+      }
+      // remove comments
+      uint64_t index = line.find("#");
+      if(index != std::string::npos){
+        line = line.substr(0, index);
+      }
+      // trim spaces on the right
+      while(line.length() > 0 && (line[line.length()-1] == ' '
+            || line[line.length()-1] == '\t')){
+        line.erase(line.length()-1, 1);
+      }
+      if(line.empty()) continue;
+      index = line.find("=");
+      JASSERT(index != std::string::npos).Text("Invalid config file syntax.");
+      option = line.substr(0, index);
+      value = line.substr(index+1, line.length());
+
+      if (option == GLOBAL_CKPT_DIR_OPTION){
+        globalCkptDir = value;
+      }
+      else if (option == LOCAL_CKPT_DIR_OPTION){
+        localCkptDir = value;
+      }
+      else if (option == GLOBAL_CKPT_INT_OPTION){
+        try {
+          globalInterval = std::stoi(value);
+        }
+        catch (std::exception& e){
+          JASSERT(false)
+            .Text("Error parsing global checkpoint interval.");
+        }
+        JASSERT(globalInterval >= 0)(globalInterval)
+          .Text("Invalid global checkpoint interval.");
+      }
+      else if (option == SOLOMON_CKPT_INT_OPTION){
+        try {
+          solomonInterval = std::stoi(value);
+        }
+        catch (std::exception& e){
+          JASSERT(false)
+            .Text("Error parsing Reed-Solomon checkpoint interval.");
+        }
+        JASSERT(solomonInterval >= 0)(solomonInterval)
+          .Text("Invalid Reed-Solomon checkpoint interval.");
+      }
+      else if (option == PARTNER_CKPT_INT_OPTION){
+        try {
+          partnerInterval = std::stoi(value);
+        }
+        catch (std::exception& e){
+          JASSERT(false)
+            .Text("Error parsing partner checkpoint interval.");
+        }
+        JASSERT(partnerInterval >= 0)(partnerInterval)
+          .Text("Invalid partner checkpoint interval.");
+      }
+      else if (option == LOCAL_CKPT_INT_OPTION){
+        try {
+          localInterval = std::stoi(value);
+        }
+        catch (std::exception& e){
+          JASSERT(false)
+            .Text("Error parsing local checkpoint interval.");
+        }
+        JASSERT(localInterval >= 0)(localInterval)
+          .Text("Invalid local checkpoint interval.");
+      }
+      else if (option == TEST_MODE_OPTION){
+        try {
+          testMode = std::stoi(value);
+        }
+        catch (std::exception& e){
+          JASSERT(false)
+            .Text("Error parsing test mode.");
+        }
+        JASSERT(testMode == 0 || testMode == 1)(testMode)
+          .Text("Invalid test mode.");
+      }
+      else if (option == NODE_SIZE_OPTION){
+        try {
+          nodeSize = std::stoi(value);
+        }
+        catch (std::exception& e){
+          JASSERT(false)
+            .Text("Error parsing node size.");
+        }
+        JASSERT(nodeSize > 0)(nodeSize)
+          .Text("Invalid node size.");
+      }
+      else if (option == GROUP_SIZE_OPTION){
+        try {
+          groupSize = std::stoi(value);
+        }
+        catch (std::exception& e){
+          JASSERT(false)
+            .Text("Error parsing group size.");
+        }
+        JASSERT(groupSize > 0)(groupSize)
+          .Text("Invalid group size.");
+      }
+      else if (option == ENC_MAX_THREADS_OPTION){
+        try {
+          encodeMaxThreads = std::stoi(value);
+        }
+        catch (std::exception& e){
+          JASSERT(false)
+            .Text("Error parsing maximum number of encoding threads.");
+        }
+        JASSERT((encodeMaxThreads >= 0))(encodeMaxThreads)
+          .Text("Invalid maximum number of encoding threads.");
+      }
+      else if (option == ENC_BLOCKS_PER_THREAD_OPTION){
+        try {
+          encodeBlocksPerThread = std::stoi(value);
+        }
+        catch (std::exception& e){
+          JASSERT(false)
+            .Text("Error parsing the number of blocks per encoding thread.");
+        }
+        JASSERT((encodeBlocksPerThread > 0))(encodeBlocksPerThread)
+          .Text("Invalid number of blocks per encoding thread.");
+      }
+      else {
+        JASSERT(false)(option)
+          .Text("Invalid config option.");
+      }
+    }
+    configFile.close();
+  }
+  else {
+    JASSERT(false)
+      .Text("Could not open configuration file.");
+  }
+}
+
+
+RestartInfo::RestartInfo(){
+  int i;
+  for (i = 0; i <= CKPT_GLOBAL; i++){
+    ckptDir[i] = "";
+    // initialize as not having performed any checkpoints
+    ckptTime[i] = 0;
+  }
+}
+
+
+void
+RestartInfo::update(string ckpt_dir, int ckpt_type, uint64_t curr_time){
+  ckptDir[ckpt_type] = ckpt_dir;
+  ckptTime[ckpt_type] = curr_time;
+}
+
+void
+RestartInfo::writeRestartInfo(){
+  int i;
+  std::ofstream file(".restartinfo", std::fstream::out | std::fstream::trunc);
+  std::string aux;
+
+  if(file.is_open()){
+    for (i = 0; i <= CKPT_GLOBAL; i++){
+      file.write(ckptDir[i].c_str(), ckptDir[i].length());
+      file.write("\n", 1);
+    }
+    for (i = 0; i <= CKPT_GLOBAL; i++){
+      aux = std::to_string(ckptTime[i]);
+      file.write(aux.c_str(), aux.length());
+      file.write("\n", 1);
+    }
+    file.close();
+  }
+  else {
+    JASSERT(false).Text("Could not open .restartinfo file for writing.");
+  }
+}
+
+
+int
+RestartInfo::readRestartInfo(){
+  int i;
+  std::string aux;
+  std::ifstream file(".restartinfo", std::fstream::in);
+
+  if(file.is_open()){
+    try {
+      for(i = 0; i <= CKPT_GLOBAL; i++){
+        std::getline(file, ckptDir[i]);
+      }
+      for(i = 0; i <= CKPT_GLOBAL; i++){
+        std::getline(file, aux);
+        ckptTime[i] = std::stoll(aux);
+      }
+      file.close();
+      return 1;
+    }
+    catch (std::exception& e){
+      file.close();
+      return 0;
+    }
+  }
+  else {
+    return 0;
+  }
+}
+
+Topology::Topology(int test_mode, int num_nodes, char *name_list,
+                   char *host_name, int *node_map, int *partner_map,
+                   int num_proc, int node_size, int group_size,
+                   int section_ID, int group_rank, int righ_t,
+                   int lef_t, MPI_Comm group_comm){
+  numNodes = num_nodes; nameList = name_list; hostname = host_name;
+  nodeMap = node_map; partnerMap = partner_map; numProc = num_proc;
+  nodeSize = node_size; groupSize = group_size; sectionID = section_ID;
+  groupRank = group_rank; right = righ_t; left = lef_t;
+  groupComm = group_comm; testMode = test_mode;
 }

@@ -29,6 +29,7 @@
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <openssl/md5.h>
 #include "jassert.h"
 #include "constants.h"
 #include "dmtcp.h"
@@ -37,6 +38,7 @@
 #include "procselfmaps.h"
 #include "shareddata.h"
 #include "util.h"
+#include "util_mpi.h"
 
 #define DEV_ZERO_DELETED_STR "/dev/zero (deleted)"
 #define DEV_NULL_DELETED_STR "/dev/null (deleted)"
@@ -55,6 +57,14 @@ using namespace dmtcp;
 EXTERNC int dmtcp_infiniband_enabled(void) __attribute__((weak));
 
 static bool skipWritingTextSegments = false;
+
+// MD5 checksum
+static MD5_CTX context;
+static unsigned char digest[16];
+static uint64_t num_updates = 0;
+
+// fixed allocation for memcpy
+static char mem_tmp[MEM_TMP_SIZE];
 
 // FIXME:  Why do we create two global variable here?  They should at least
 // be static (file-private), and preferably local to a function.
@@ -83,6 +93,9 @@ static void writeAreaHeader(int fd, Area *area) {
     ((void*)area->addr)((int)area->size);
   int rc = Util::writeAll(fd, area, sizeof(*area));
   JASSERT(rc != -1)(JASSERT_ERRNO).Text("writeAll failed during ckpt");
+  if (ProcessInfo::instance().getCkptType() != CKPT_SOLOMON) {
+    MD5_Update(&context, area, sizeof(*area));
+  }
 }
 
 /*****************************************************************************
@@ -96,7 +109,7 @@ static void writeAreaHeader(int fd, Area *area) {
  *
  *****************************************************************************/
 void
-mtcp_writememoryareas(int fd)
+mtcp_writememoryareas(int fd, int fd_chksum)
 {
   Area area;
 
@@ -108,6 +121,12 @@ mtcp_writememoryareas(int fd)
   }
 
   JTRACE("Performing checkpoint.");
+
+  if (ProcessInfo::instance().getCkptType() != CKPT_SOLOMON) {
+     // re-initialize MD5 context
+     MD5_Init(&context);
+     num_updates = 0;
+  }
 
   // Here we want to sync the shared memory pages with the backup files
   // FIXME: Why do we need this?
@@ -353,6 +372,12 @@ mtcp_writememoryareas(int fd)
   area.size = -1; // End of data
   Util::writeAll(fd, &area, sizeof(area));
 
+  if (ProcessInfo::instance().getCkptType() != CKPT_SOLOMON) {
+    MD5_Final(digest, &context);
+    Util::writeAll(fd_chksum, digest, 16);
+    JASSERT(_real_close(fd_chksum) == 0);
+  }
+
   /* That's all folks */
   JASSERT(_real_close(fd) == 0);
 }
@@ -456,8 +481,21 @@ mtcp_write_non_rwx_and_anonymous_pages(int fd, Area *orig_area)
 
     writeAreaHeader(fd, &a);
     if (!is_zero) {
-      rc = Util::writeAll(fd, a.addr, a.size);
-      JASSERT(rc != -1)(JASSERT_ERRNO).Text("writeAll failed during ckpt");
+      uint64_t toCopy = a.size;
+      while (toCopy > 0){
+        uint64_t chunkSize = (toCopy > MEM_TMP_SIZE) ?
+                           MEM_TMP_SIZE : toCopy;
+
+        // Move memory region data to a fixed location
+        // to avoid modification while executing
+        memcpy(mem_tmp, a.addr + (a.size-toCopy), chunkSize);
+        rc = Util::writeAll(fd, mem_tmp, chunkSize);
+        JASSERT(rc != -1)(JASSERT_ERRNO).Text("writeAll failed during ckpt");
+        if (ProcessInfo::instance().getCkptType() != CKPT_SOLOMON) {
+          MD5_Update(&context, mem_tmp, chunkSize);
+        }
+        toCopy -= chunkSize;
+      }
     } else {
       if (madvise(a.addr, a.size, MADV_DONTNEED) == -1) {
         JNOTE("error doing madvise(..., MADV_DONTNEED)")
@@ -540,13 +578,27 @@ writememoryarea(int fd, Area *area, int stack_was_seen)
       writeAreaHeader(fd, area);
       // NOTE: We cannot use lseek(SEEK_CUR) to detect how much data was
       // actually written here. This is because fd might be a pipe to gzip.
+      uint64_t writeSize = 0;
       if (!(area->flags & MAP_ANONYMOUS) &&
           area->mmapFileSize > 0) {
-        rc = Util::writeAll(fd, area->addr, area->mmapFileSize);
+        writeSize = area->mmapFileSize;
       } else {
-        rc = Util::writeAll(fd, area->addr, area->size);
+        writeSize = area->size;
       }
-      JASSERT(rc != -1)(JASSERT_ERRNO).Text("writeAll failed during ckpt");
+      uint64_t toCopy = writeSize;
+      while (toCopy > 0){
+        uint64_t chunkSize = (toCopy > MEM_TMP_SIZE) ?
+                           MEM_TMP_SIZE : toCopy;
+        // Move memory region data to a fixed location
+        // to avoid modifying while executing
+        memcpy(mem_tmp, area->addr + (writeSize-toCopy), chunkSize);
+        rc = Util::writeAll(fd, mem_tmp, chunkSize);
+        JASSERT(rc != -1)(JASSERT_ERRNO).Text("writeAll failed during ckpt");
+        if (ProcessInfo::instance().getCkptType() != CKPT_SOLOMON) {
+          MD5_Update(&context, mem_tmp, chunkSize);
+        }
+        toCopy -= chunkSize;
+      }
     }
   }
 }

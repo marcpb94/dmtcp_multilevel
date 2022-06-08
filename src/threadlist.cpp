@@ -5,6 +5,7 @@
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include "config.h"
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 11) || \
@@ -28,6 +29,8 @@
 #include "uniquepid.h"
 #include "util.h"
 #include "shareddata.h"
+#include "util_mpi.h"
+
 
 // For i386 and x86_64, SETJMP currently has bugs.  Don't turn this
 // on for them until they are debugged.
@@ -72,6 +75,8 @@ extern bool sem_launch_first_time;
 extern sem_t sem_launch; // allocated in coordinatorapi.cpp
 static sem_t semNotifyCkptThread;
 static sem_t semWaitForCkptThreadSignal;
+
+static int knownTopology = 0;
 
 static void *checkpointhread(void *dummy);
 static void stopthisthread(int sig);
@@ -296,6 +301,16 @@ prepareMtcpHeader(MtcpHeader *mtcpHdr)
   mtcpHdr->post_restart = &ThreadList::postRestart;
 }
 
+static uint64_t
+getRealCurrTime()
+{
+  struct timeval time;
+  uint64_t microsec = 0;
+  JASSERT(gettimeofday(&time, NULL) == 0);
+  microsec = time.tv_sec*1000000L + time.tv_usec;
+  return microsec;
+}
+
 /*************************************************************************
  *
  *  Write checkpoint image
@@ -404,6 +419,8 @@ checkpointhread(void *dummy)
     JTRACE("before DmtcpWorker::waitForCheckpointRequest()");
     DmtcpWorker::waitForCheckpointRequest();
 
+    uint64_t start_time = getRealCurrTime();
+
     restoreInProgress = false;
 
     ThreadList::suspendThreads();
@@ -417,6 +434,41 @@ checkpointhread(void *dummy)
     ThreadList::writeCkpt();
 
     DmtcpWorker::postCheckpoint();
+
+    // build topology once
+    if(!knownTopology){
+      Topology *topo;
+      ConfigInfo *cfg = ProcessInfo::instance().getConfig();
+      UtilsMPI::instance().getSystemTopology(cfg, &topo);
+      ProcessInfo::instance().setTopology(topo);
+      knownTopology = 1;
+    }
+
+    uint64_t post_start = getRealCurrTime();
+
+    // post-processing if needed by the checkpoint type
+    int ckpt_type = ProcessInfo::instance().getCkptType();
+    if(ckpt_type == CKPT_PARTNER){
+      CkptSerializer::performPartnerCopy();
+    }
+    else if (ckpt_type == CKPT_SOLOMON){
+      CkptSerializer::performRSEncoding();
+    }
+
+    uint64_t post_time = (getRealCurrTime() - post_start)/1000;
+    double post_time_sec = ((double)post_time)/1000;
+    if(UtilsMPI::instance().getRank() == 0){
+        printf("Post-processing took %.3f seconds.\n", post_time_sec);
+    }
+
+    uint64_t ckpt_time_ms = (getRealCurrTime() - start_time)/1000;
+    double time_sec = ((double)ckpt_time_ms)/1000;
+
+    if (UtilsMPI::instance().getRank() == 0) {
+      printf("Checkpoint of type %d done in %.3f seconds.\n",
+             ckpt_type, time_sec);
+      fflush(stdout);
+    }
 
     ThreadList::resumeThreads();
   }

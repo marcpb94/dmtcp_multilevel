@@ -21,6 +21,7 @@
 #include <limits.h> /* for LONG_MIN and LONG_MAX */
 #include <stdlib.h>
 #include <sys/syscall.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #ifdef __aarch64__
@@ -47,6 +48,7 @@
 #include "protectedfds.h"
 #include "syscallwrappers.h"
 #include "util.h"
+#include "util_mpi.h"
 
 // aarch64 doesn't define SYS_pipe kernel call by default.
 #if defined(__aarch64__)
@@ -66,7 +68,7 @@ static int forked_ckpt_status = -1;
 static pid_t ckpt_extcomp_child_pid = -1;
 static struct sigaction saved_sigchld_action;
 static int open_ckpt_to_write(int fd, int pipe_fds[2], char **extcomp_args);
-void mtcp_writememoryareas(int fd) __attribute__((weak));
+void mtcp_writememoryareas(int fd, int fd_chksum) __attribute__((weak));
 
 /* We handle SIGCHLD while checkpointing. */
 static void
@@ -428,15 +430,31 @@ CkptSerializer::writeCkptImage(void *mtcpHdr,
     return;
   }
 
+  string ckptDir = ProcessInfo::instance().getCkptDir();
+  string checksumFilename = ckptFilename + "_md5chksum";
+
+  if(UtilsMPI::instance().getRank() == 0){
+    printf("Performing checkpoint on dir: %s\n", ckptDir.c_str());
+  }
+
   /* fd will either point to the ckpt file to write, or else the write end
    * of a pipe leading to a compression child process.
    */
   bool use_compression = false;
   int fdCkptFileOnDisk = -1;
-  int fd = -1;
+  int fd = -1, fd_chksum = -1;
 
   fd = perform_open_ckpt_image_fd(ckptFilename.c_str(), &use_compression,
                                   &fdCkptFileOnDisk);
+
+  // Reed-Solomon checkpoint needs a checksum of the entire elongated file
+  // leave checksum generation to the encoding function
+  if (ProcessInfo::instance().getCkptType() != CKPT_SOLOMON) {
+    fd_chksum = _real_open(checksumFilename.c_str(),
+                  O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
+    JASSERT(fd_chksum >= 0);
+  }
+
   JASSERT(fdCkptFileOnDisk >= 0);
   JASSERT(use_compression || fd == fdCkptFileOnDisk);
 
@@ -447,7 +465,7 @@ CkptSerializer::writeCkptImage(void *mtcpHdr,
   JASSERT(Util::writeAll(fd, mtcpHdr, mtcpHdrLen) == (ssize_t)mtcpHdrLen);
 
   JTRACE("MTCP is about to write checkpoint image.")(ckptFilename);
-  mtcp_writememoryareas(fd);
+  mtcp_writememoryareas(fd, fd_chksum);
 
   if (use_compression) {
     /* In perform_open_ckpt_image_fd(), we set SIGCHLD to our own handler.
@@ -469,6 +487,22 @@ CkptSerializer::writeCkptImage(void *mtcpHdr,
   }
 
   JTRACE("checkpoint complete");
+}
+
+void
+CkptSerializer::performPartnerCopy()
+{
+  string ckptFilename = ProcessInfo::instance().getCkptFilename();
+  Topology* topo = ProcessInfo::instance().getTopology();
+  UtilsMPI::instance().performPartnerCopy(ckptFilename, topo);
+}
+
+void
+CkptSerializer::performRSEncoding()
+{
+  string ckptFilename = ProcessInfo::instance().getCkptFilename();
+  Topology* topo = ProcessInfo::instance().getTopology();
+  UtilsMPI::instance().performRSEncoding(ckptFilename, topo);
 }
 
 void
