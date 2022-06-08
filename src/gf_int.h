@@ -219,8 +219,8 @@ typedef enum {GF_E_MDEFDIV, /* Dev != Default && Mult == Default */
               GF_E_CF32POL, /* Mult == CFM & Prim Poly has high bits set. */
               GF_E_CF64POL, /* Mult == CFM & Prim Poly has high bits set. */
               GF_E_FEWARGS, /* Too few args in argc/argv. */
-              GF_E_BADPOLY, /* Bad primitive polynomial -- too many bits set. */
-              GF_E_COMP_PP, /* Bad primitive polynomial -- bigger than
+              GF_E_BADPOLY, /* Bad primitive polynomial - too many bits set. */
+              GF_E_COMP_PP, /* Bad primitive polynomial - bigger than
                              * sub-field. */
               GF_E_COMPXPP, /* Can't derive a default pp for composite field. */
               GF_E_BASE__W, /* Composite -- Base field is the wrong size. */
