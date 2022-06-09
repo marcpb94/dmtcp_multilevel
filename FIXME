@@ -9,3 +9,8 @@ general:
 		- change coord and dmtcpworker/threadlist
 		- move notification of dmtcpworker::postCheckpoint
 		  to coord after the postprocessing is done
+
+util_mpi.cpp:
+	- revise dummySerialize and isCkptValid
+		- serialize and ckptwrite have changed slightly
+			- need to adapt
