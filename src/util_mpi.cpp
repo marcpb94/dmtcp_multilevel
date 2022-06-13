@@ -109,7 +109,7 @@ UtilsMPI::getSystemTopology(ConfigInfo *cfg, Topology **topo)
 
   int node_size = mpi_size / num_nodes;
 
-  JASSERT(node_size != cfg->nodeSize)(node_size)(cfg->nodeSize)
+  JASSERT(node_size == cfg->nodeSize)(node_size)(cfg->nodeSize)
     .Text("Real node size does not match specified value in config file.");
 
   // We first want to create an inverse node-process mapping as that done

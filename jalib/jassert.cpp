@@ -356,6 +356,8 @@ void
 jassert_internal::jassert_safe_print(const char *str)
 {
   if (errConsoleFd != -1) {
+    // FIXME: temporary solution
+    printf("%s", str); fflush(stdout);
     jwrite(errConsoleFd, str);
   }
 

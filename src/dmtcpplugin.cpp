@@ -169,7 +169,8 @@ dmtcp_get_tmpdir(void)
 EXTERNC const char *
 dmtcp_get_ckpt_dir()
 {
-  static string *tmpdir = new string(ProcessInfo::instance().getCkptDir());
+  // FIXME: this is technically a memory leak
+  string *tmpdir = new string(ProcessInfo::instance().getCkptDir());
   return tmpdir->c_str();
 }
 

@@ -499,6 +499,14 @@ DmtcpWorker::postCheckpoint()
                  ProcessInfo::instance().getCkptFilename().c_str()) == 0);
 
 
+  if (ProcessInfo::instance().getCkptType() != CKPT_SOLOMON) {
+    string chksumFileTmp = 
+      ProcessInfo::instance().getTempCkptFilename() + "_md5chksum";
+    string chksumFile = 
+      ProcessInfo::instance().getCkptFilename() + "_md5chksum";
+    JASSERT(rename(chksumFileTmp.c_str(), chksumFile.c_str()) == 0);
+  }
+
   CoordinatorAPI::sendCkptFilename();
 
   if (exitAfterCkpt) {

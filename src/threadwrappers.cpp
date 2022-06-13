@@ -62,7 +62,8 @@ prepareThreadCreate()
   bool threadCreationLockAcquired = ThreadSync::threadCreationLockLock();
   ThreadSync::incrementUninitializedThreadCount();
 
-  JASSERT(Thread_UpdateState(curThread, ST_THREAD_CREATE, ST_RUNNING));
+  JASSERT(curThread->state == ST_CKPNTHREAD ||
+          Thread_UpdateState(curThread, ST_THREAD_CREATE, ST_RUNNING));
 
   return threadCreationLockAcquired;
 }
@@ -70,7 +71,8 @@ prepareThreadCreate()
 static void
 postThreadCreate(bool threadCreationLockAcquired)
 {
-  JASSERT(Thread_UpdateState(curThread, ST_RUNNING, ST_THREAD_CREATE));
+  JASSERT(curThread->state == ST_CKPNTHREAD ||
+          Thread_UpdateState(curThread, ST_RUNNING, ST_THREAD_CREATE));
 
   if (threadCreationLockAcquired) {
     ThreadSync::threadCreationLockUnlock();
