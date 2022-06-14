@@ -1146,7 +1146,7 @@ dummySerialize(jalib::JBinarySerializer &o){
   pid_t dummyPid;
   UniquePid dummyUPid;
   string dummyStr;
-  map<pid_t, UniquePid> dummyMap;
+  map<string, string> dummyMap;
 
   JSERIALIZE_ASSERT_POINT("ProcessInfo:");
 
@@ -1156,7 +1156,7 @@ dummySerialize(jalib::JBinarySerializer &o){
   o & dummyUPid & dummyUPid;
   o & dummy64 & dummy64
     & dummy64 & dummy64;
-  o & dummyUPid & dummy32 & dummy32 & dummy32 & dummy32;
+  o & dummyUPid & dummy32 & dummy32;
   o & dummy64 & dummy64 & dummy64;
   o & dummy64 & dummy64 & dummy64 & dummy64 & dummy64;
   int i;
@@ -1259,26 +1259,39 @@ UtilsMPI::isCkptValid(const char *filename){
 
     // printf("area name: %s\n", area.name);
 
+    if (Util::isNscdArea(area)){
+      // skip address for NSCD areas
+      continue;
+    }
 
-    // handle non rwx and anonymous pages
+    uint64_t toRead = 0;
     if (area.prot == 0 || (area.name[0] == '\0' &&
           ((area.flags & MAP_ANONYMOUS) != 0) &&
           ((area.flags & MAP_PRIVATE) != 0))){
+      // handle non rwx and anonymous pages
       if(area.properties == DMTCP_ZERO_PAGE) {
         // zero page, skip
         continue;
       }
+      else  {
+        toRead = area.size;
+      }
+    }
+    else if ((area.properties & DMTCP_SKIP_WRITING_TEXT_SEGMENTS) &&
+             (area.prot & PROT_EXEC)){
+      // skip text segment if applicable
+      continue;
+    }
+    else {
+      if (!(area.flags & MAP_ANONYMOUS) &&
+          area.mmapFileSize > 0) {
+        toRead = area.mmapFileSize;
+      }
+      else {
+        toRead = area.size;
+      }
     }
 
-
-    if ((area.properties & DMTCP_SKIP_WRITING_TEXT_SEGMENTS) &&
-          (area.prot & PROT_EXEC)){
-       // skip text segment if applicable
-       continue;
-    }
-
-
-    uint64_t toRead = area.size;
     while (toRead > 0){
       uint64_t chunkSize = (toRead > MEM_TMP_SIZE) ?
                            MEM_TMP_SIZE : toRead;
