@@ -636,6 +636,9 @@ DmtcpCoordinator::recordCkptFilename(CoordClient *client, const char *extraData)
 
     // All the workers have checkpointed so now it is safe to reset this flag.
     workersRunningAndSuspendMsgSent = false;
+
+    // resume alarm
+    recomputeCkptTimings(currentAlarmTime);
   }
 }
 
@@ -1425,7 +1428,6 @@ signalHandler(int signum)
         (time(NULL) - start_time) >= (timeout - 1)) { // -1 for roundoff
       exit(1);
     }
-    recomputeCkptTimings(currentAlarmTime);
   } else {
     JASSERT(false).Text("Not reached");
   }
