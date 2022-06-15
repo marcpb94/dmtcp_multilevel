@@ -637,6 +637,9 @@ DmtcpCoordinator::recordCkptFilename(CoordClient *client, const char *extraData)
     // All the workers have checkpointed so now it is safe to reset this flag.
     workersRunningAndSuspendMsgSent = false;
 
+    printf("Workers have finished checkpointing.\n");
+    fflush(stdout);
+
     // resume alarm
     recomputeCkptTimings(currentAlarmTime);
   }
