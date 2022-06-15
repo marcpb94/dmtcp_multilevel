@@ -716,9 +716,11 @@ setNewCkptDir(const string& path)
 int
 main(int argc, char **argv)
 {
+  const char *recovery_file = ".recovery";
   char *tmpdir_arg = NULL;
   ConfigInfo conf = ConfigInfo();
   conf.globalCkptDir = "<NOT SET>";
+  int recovery = 0;
 
   initializeJalib();
 
@@ -801,6 +803,9 @@ main(int argc, char **argv)
     } else if (argc > 1 && s == "--config") {
       conf.readConfigFromFile(std::string(argv[1]));
       shift; shift;
+    } else if (s == "--recover") {
+      recovery = 1;
+      shift;
     } else if (argc > 1 && (s == "--gdb")) {
       requestedDebugLevel = atoi(argv[1]);
       shift; shift;
@@ -825,11 +830,32 @@ main(int argc, char **argv)
     }
   }
 
-  // if restartDir not specified, perform recovery procedure
+  int rfd;
+  char restart[255];
   if (restartDir.empty()){
     JASSERT(conf.globalCkptDir != "<NOT SET>")
       .Text("No restartdir or config file specified.");
-    restartDir = UtilsMPI::instance().recoverFromCrash(&conf);
+    if (recovery) {
+      restartDir = UtilsMPI::instance().recoverFromCrash(&conf);
+      rfd = open(recovery_file, O_CREAT | O_TRUNC | O_WRONLY,
+                 S_IRUSR | S_IWUSR);
+      JASSERT(rfd != -1).Text("Could not create recovery file.");
+      JASSERT(Util::writeAll(rfd, restartDir.c_str(),
+              restartDir.length()) ==  restartDir.length())
+        .Text("Error writing to recovery file.");
+      fsync(rfd);
+      JASSERT(close(rfd) == 0).Text("Could not close recovery file");
+      return 0;
+    }
+    else {
+      rfd = open(recovery_file, O_RDONLY);
+      JASSERT(rfd != -1).Text("Could not read recovery file");
+      JASSERT(Util::readAll(rfd, restart, 255) > 0);
+      JASSERT(close(rfd) == 0).Text("Could not close recovery file");
+      JASSERT(remove(recovery_file) == 0)
+        .Text("Could not delete recovery file");
+      restartDir = string(restart);
+    }
   }
 
   if ((getenv(ENV_VAR_NAME_PORT) == NULL ||

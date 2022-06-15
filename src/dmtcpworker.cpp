@@ -500,9 +500,9 @@ DmtcpWorker::postCheckpoint()
 
 
   if (ProcessInfo::instance().getCkptType() != CKPT_SOLOMON) {
-    string chksumFileTmp = 
+    string chksumFileTmp =
       ProcessInfo::instance().getTempCkptFilename() + "_md5chksum";
-    string chksumFile = 
+    string chksumFile =
       ProcessInfo::instance().getCkptFilename() + "_md5chksum";
     JASSERT(rename(chksumFileTmp.c_str(), chksumFile.c_str()) == 0);
   }
