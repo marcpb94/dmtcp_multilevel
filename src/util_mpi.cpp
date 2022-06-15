@@ -511,10 +511,6 @@ void
 UtilsMPI::performRSEncoding(string ckptFilename, Topology* topo){
   int w;
 
-  // Group rank 0 is the process that will perform RS encoding from the blocks
-  // of ckpt image the other processes send him. After each block of encoded
-  // ckpt file has been calculated, group rank 0 sends to the other processes
-  // their corresponding part.
   if(topo->groupRank == 0){
     printf("Performing RS encoding...\n");
     fflush(stdout);

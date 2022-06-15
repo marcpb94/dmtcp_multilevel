@@ -433,8 +433,6 @@ checkpointhread(void *dummy)
      */
     ThreadList::writeCkpt();
 
-    DmtcpWorker::postCheckpoint();
-
     // build topology once
     if(!knownTopology){
       Topology *topo;
@@ -469,6 +467,8 @@ checkpointhread(void *dummy)
              ckpt_type, time_sec);
       fflush(stdout);
     }
+
+    DmtcpWorker::postCheckpoint();
 
     ThreadList::resumeThreads();
   }

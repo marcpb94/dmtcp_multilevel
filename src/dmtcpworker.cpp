@@ -498,13 +498,33 @@ DmtcpWorker::postCheckpoint()
   JASSERT(rename(ProcessInfo::instance().getTempCkptFilename().c_str(),
                  ProcessInfo::instance().getCkptFilename().c_str()) == 0);
 
+  string tmpFilename = ProcessInfo::instance().getTempCkptFilename();
+  string filename = ProcessInfo::instance().getCkptFilename();
 
-  if (ProcessInfo::instance().getCkptType() != CKPT_SOLOMON) {
-    string chksumFileTmp =
-      ProcessInfo::instance().getTempCkptFilename() + "_md5chksum";
-    string chksumFile =
-      ProcessInfo::instance().getCkptFilename() + "_md5chksum";
-    JASSERT(rename(chksumFileTmp.c_str(), chksumFile.c_str()) == 0);
+  string chksumFileTmp = tmpFilename + "_md5chksum";
+  string chksumFile = filename + "_md5chksum";
+  JASSERT(rename(chksumFileTmp.c_str(), chksumFile.c_str()) == 0);
+
+  int ckpt_type = ProcessInfo::instance().getCkptType();
+  if (ckpt_type == CKPT_PARTNER) {
+    string partnerTmpFilename = tmpFilename + "_partner";
+    string partnerFilename = filename + "_partner";
+    string partnerTmpChksumFile = tmpFilename + "_partner_md5chksum";
+    string partnerChksumFile = filename + "_partner_md5chksum";
+    JASSERT(rename(partnerTmpFilename.c_str(),
+                   partnerFilename.c_str()) == 0);
+    JASSERT(rename(partnerTmpChksumFile.c_str(),
+                   partnerChksumFile.c_str()) == 0);
+  }
+  else if(ckpt_type == CKPT_SOLOMON) {
+    string encTmpFilename = tmpFilename + "_encoded";
+    string encFilename = filename + "_encoded";
+    string encTmpChksumFile = tmpFilename + "_encoded_md5chksum";
+    string encChksumFile = filename + "_encoded_md5chksum";
+    JASSERT(rename(encTmpFilename.c_str(),
+                   encFilename.c_str()) == 0);
+    JASSERT(rename(encTmpChksumFile.c_str(),
+                   encChksumFile.c_str()) == 0);
   }
 
   CoordinatorAPI::sendCkptFilename();

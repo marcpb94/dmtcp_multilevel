@@ -492,7 +492,7 @@ CkptSerializer::writeCkptImage(void *mtcpHdr,
 void
 CkptSerializer::performPartnerCopy()
 {
-  string ckptFilename = ProcessInfo::instance().getCkptFilename();
+  string ckptFilename = ProcessInfo::instance().getTempCkptFilename();
   Topology* topo = ProcessInfo::instance().getTopology();
   UtilsMPI::instance().performPartnerCopy(ckptFilename, topo);
 }
@@ -500,7 +500,7 @@ CkptSerializer::performPartnerCopy()
 void
 CkptSerializer::performRSEncoding()
 {
-  string ckptFilename = ProcessInfo::instance().getCkptFilename();
+  string ckptFilename = ProcessInfo::instance().getTempCkptFilename();
   Topology* topo = ProcessInfo::instance().getTopology();
   UtilsMPI::instance().performRSEncoding(ckptFilename, topo);
 }
