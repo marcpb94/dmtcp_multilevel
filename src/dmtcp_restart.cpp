@@ -830,30 +830,38 @@ main(int argc, char **argv)
     }
   }
 
-  int rfd;
+  int rfd, rank, num_read;
   char restart[255];
   if (restartDir.empty()){
     JASSERT(conf.globalCkptDir != "<NOT SET>")
       .Text("No restartdir or config file specified.");
     if (recovery) {
       restartDir = UtilsMPI::instance().recoverFromCrash(&conf);
-      rfd = open(recovery_file, O_CREAT | O_TRUNC | O_WRONLY,
-                 S_IRUSR | S_IWUSR);
-      JASSERT(rfd != -1).Text("Could not create recovery file.");
-      JASSERT(Util::writeAll(rfd, restartDir.c_str(),
-              restartDir.length()) ==  restartDir.length())
-        .Text("Error writing to recovery file.");
-      fsync(rfd);
-      JASSERT(close(rfd) == 0).Text("Could not close recovery file");
+      rank = UtilsMPI::instance().getRank();
+      if (rank == 0){
+        rfd = open(recovery_file, O_CREAT | O_TRUNC | O_WRONLY,
+                   S_IRUSR | S_IWUSR);
+        JASSERT(rfd != -1).Text("Could not create recovery file.");
+        JASSERT(Util::writeAll(rfd, restartDir.c_str(),
+                restartDir.length()) ==  restartDir.length())
+          .Text("Error writing to recovery file.");
+        fsync(rfd);
+        JASSERT(close(rfd) == 0).Text("Could not close recovery file");
+      }
       return 0;
     }
     else {
       rfd = open(recovery_file, O_RDONLY);
       JASSERT(rfd != -1).Text("Could not read recovery file");
-      JASSERT(Util::readAll(rfd, restart, 255) > 0);
+      num_read = Util::readAll(rfd, restart, 255);
+      JASSERT(num_read > 0).Text("Error reading recovery file");
+      restart[num_read] = '\0';
       JASSERT(close(rfd) == 0).Text("Could not close recovery file");
-      JASSERT(remove(recovery_file) == 0)
-        .Text("Could not delete recovery file");
+      // FIXME: we should ideally delete the file after reading it,
+      // but we have no way of synchronizing with other processes since
+      // we don't want to initialize MPI.
+      // It works for now, as mana_restart script will always force
+      // the overwriting of the previous recovery file.
       restartDir = string(restart);
     }
   }
