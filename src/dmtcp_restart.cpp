@@ -848,6 +848,9 @@ main(int argc, char **argv)
         fsync(rfd);
         JASSERT(close(rfd) == 0).Text("Could not close recovery file");
       }
+      // avoid potential race condition by making sure
+      // the file is written before any process exits.
+      MPI_Barrier(MPI_COMM_WORLD);
       return 0;
     }
     else {
