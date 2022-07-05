@@ -440,6 +440,11 @@ ProcessInfo::resetOnFork()
   DmtcpMutexInit(&tblLock, DMTCP_MUTEX_NORMAL);
   _ppid = _pid;
   _pid = getpid();
+
+  _upid = UniquePid();
+  _uppid = UniquePid();
+  _upidStr.clear();
+
   _isRootOfProcessTree = false;
   _pthreadJoinId.clear();
   int i, tmp_type = _ckptType;
@@ -578,17 +583,17 @@ ProcessInfo::endPthreadJoin(pthread_t thread)
   _do_unlock_tbl();
 }
 
-string
+const string&
 ProcessInfo::getCkptFilename(){
   return _ckptFileName[_ckptType];
 }
 
-string
+const string&
 ProcessInfo::getCkptFilesSubDir(){
   return _ckptFilesSubDir[_ckptType];
 }
 
-string
+const string&
 ProcessInfo::getCkptDir(){
   return _ckptDir[_ckptType];
 }
