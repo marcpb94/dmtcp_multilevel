@@ -692,7 +692,7 @@ uint64_t dmtcp_dlsym_lib_fnc_offset(const char *libname, const char *symbol);
  * Use this to distinguish DMTCP failing versus the target application failing.
  */
 #define DMTCP_FAIL_RC_PARAM                                      \
-   (getenv("DMTCP_FAIL_RC") && atoi(getenv("DMTCP_FAIL_RC"))     \
+  (getenv("DMTCP_FAIL_RC") && atoi(getenv("DMTCP_FAIL_RC"))      \
       ? atoi(getenv("DMTCP_FAIL_RC"))                            \
       : 99)
 
