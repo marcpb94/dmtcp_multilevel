@@ -393,9 +393,6 @@ checkpointhread(void *dummy)
     JASSERT(pthread_sigmask(SIG_SETMASK, &set, NULL) == 0);
   }
 
-  Thread_SaveSigState(ckptThread);
-  TLSInfo_SaveTLSState(ckptThread);
-
   /* Set up our restart point.  I.e., we get jumped to here after a restore. */
 #ifdef SETJMP
   JASSERT(sigsetjmp(ckptThread->jmpbuf, 1) >= 0) (JASSERT_ERRNO);
@@ -434,6 +431,13 @@ checkpointhread(void *dummy)
 
     JTRACE("Prepare plugin, etc. for checkpoint");
     DmtcpWorker::preCheckpoint();
+
+    // Gather ckpt-thread's TLS state as it could have changed as a result of
+    // dlopening libraries with TLS objects.
+    TLSInfo_SaveTLSState(ckptThread);
+
+    // Save signal mask and capture any pending signals.
+    Thread_SaveSigState(ckptThread);
 
     /* All other threads halted in 'stopthisthread' routine (they are all
      * in state ST_SUSPENDED).  It's safe to write checkpoint file now.
@@ -617,8 +621,7 @@ stopthisthread(int signum)
 #endif // if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 11)
 
     Thread_SaveSigState(curThread); // save sig state (and block sig delivery)
-    TLSInfo_SaveTLSState(curThread); // save thread local storage
-                                               // state
+    TLSInfo_SaveTLSState(curThread); // save thread local storage state
 
     /* Set up our restart point, ie, we get jumped to here after a restore */
 #ifdef SETJMP
