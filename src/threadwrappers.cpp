@@ -123,7 +123,8 @@ __clone(int (*fn)(void *arg),
         struct user_desc *newtls,
         int *child_tidptr)
 {
-  if (curThread->state == ST_THREAD_CREATE) {
+  if (curThread->state == ST_THREAD_CREATE
+      || curThread->state == ST_CKPNTHREAD) {
     return _real_clone(
       fn, child_stack, flags, arg, parent_tidptr, newtls, child_tidptr);
   }
@@ -137,7 +138,8 @@ __clone(int (*fn)(void *arg),
 extern "C" long
 clone3(struct clone_args *cl_args, size_t size)
 {
-  if (curThread->state == ST_THREAD_CREATE) {
+  if (curThread->state == ST_THREAD_CREATE
+      || curThread->state == ST_CKPNTHREAD) {
     return NEXT_FNC(clone3)(cl_args, size);
   }
 

@@ -89,7 +89,6 @@ int DmtcpRWLockRdLock(DmtcpRWLock *rwlock)
 int DmtcpRWLockRdLockIgnoreQueuedWriter(DmtcpRWLock *rwlock)
 {
   uint32_t old = __atomic_fetch_add(&rwlock->nReaders, 1, __ATOMIC_SEQ_CST);
-  JASSERT(old > 0);
   JASSERT(old + 1 != 0); // Overflow
   return 0;
 }
