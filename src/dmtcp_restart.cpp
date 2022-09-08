@@ -850,7 +850,7 @@ main(int argc, char **argv)
       restartDir = string(restart);
     }
   }
-  
+
   tmpDir = Util::calcTmpDir(tmpdir_arg);
 
   // make sure JASSERT initializes now, rather than during restart
