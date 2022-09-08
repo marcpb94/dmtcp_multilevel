@@ -104,12 +104,8 @@ class JAssert
     JAssert &Text(const char *msg);
 
     ///
-    /// prints stack backtrace and always returns true
-    JAssert &jbacktrace();
-
-    ///
     /// constructor: sets members
-    JAssert(bool exitWhenDone);
+    JAssert(const char* type = "ERROR", bool exitWhenDone = true);
 
     ///
     /// destructor: exits program if exitWhenDone is set
@@ -128,16 +124,62 @@ class JAssert
     { Print(t); return *this; }
 
   private:
+    void PrintProcMaps();
+    void PrintBacktrace();
+
+    void writeToConsole(const char *);
+    void writeToLog(const char *);
+
     ///
     /// if set true (on construction) call exit() on destruction
     bool _exitWhenDone;
     dmtcp::ostringstream ss;
 };
 
+class JTrace : public JAssert
+{
+  public:
+#ifdef JALIB_ALLOCATOR
+    static void *operator new(size_t nbytes, void *p) { return p; }
+
+    static void *operator new(size_t nbytes) { JALLOC_HELPER_NEW(nbytes); }
+
+    static void operator delete(void *p) { JALLOC_HELPER_DELETE(p); }
+#endif // ifdef JALIB_ALLOCATOR
+
+    JTrace() : JAssert("TRACE", false) {}
+};
+
+class JNote : public JAssert
+{
+  public:
+#ifdef JALIB_ALLOCATOR
+    static void *operator new(size_t nbytes, void *p) { return p; }
+
+    static void *operator new(size_t nbytes) { JALLOC_HELPER_NEW(nbytes); }
+
+    static void operator delete(void *p) { JALLOC_HELPER_DELETE(p); }
+#endif // ifdef JALIB_ALLOCATOR
+
+    JNote() : JAssert("NOTE", false) {}
+};
+
+class JWarning : public JAssert
+{
+  public:
+#ifdef JALIB_ALLOCATOR
+    static void *operator new(size_t nbytes, void *p) { return p; }
+
+    static void *operator new(size_t nbytes) { JALLOC_HELPER_NEW(nbytes); }
+
+    static void operator delete(void *p) { JALLOC_HELPER_DELETE(p); }
+#endif // ifdef JALIB_ALLOCATOR
+
+    JWarning() : JAssert("WARNING", false) {}
+};
 
 const char *jassert_basename(const char *str);
-dmtcp::ostream &jassert_output_stream();
-void jassert_safe_print(const char *);
+dmtcp::ostream &output_stream();
 void jassert_init();
 void close_stderr();
 
@@ -145,11 +187,7 @@ template<typename T>
 inline JAssert&
 JAssert::Print(const T &t)
 {
-#ifdef JASSERT_FAST
-  jassert_output_stream() << t;
-#else // ifdef JASSERT_FAST
   ss << t;
-#endif // ifdef JASSERT_FAST
   return *this;
 }
 
@@ -157,11 +195,7 @@ inline JAssert&
 JAssert::Print(const char *t)
 {
   if (t != NULL) {
-#ifdef JASSERT_FAST
-    jassert_output_stream() << *t;
-#else // ifdef JASSERT_FAST
     ss << t;
-#endif // ifdef JASSERT_FAST
   }
   return *this;
 }
@@ -176,22 +210,19 @@ JAssert::Print(const dmtcp::vector<T> &t)
   return *this;
 }
 
-void set_log_file(const dmtcp::string &path,
-                  const dmtcp::string tmpDir,
-                  const dmtcp::string &uniquePidStr);
+void set_log_file(const dmtcp::string &path);
+void open_log_file();
 }// jassert_internal
 
 #define JASSERT_INIT(p) (jassert_internal::jassert_init());
 
-#define JASSERT_SET_LOG(log, tmpdir, uniquePidStr) \
-  (jassert_internal::set_log_file(log, tmpdir, uniquePidStr));
+#define JASSERT_SET_LOG(log) (jassert_internal::set_log_file(log));
 
 #define JASSERT_CLOSE_STDERR() (jassert_internal::close_stderr());
 
 #define JASSERT_ERRNO     (strerror(errno))
 
-#define JASSERT_PRINT(str) jassert_internal::JAssert(false).Print(str)
-#define JASSERT_STDERR    jassert_internal::JAssert(false)
+#define JASSERT_STDERR    jassert_internal::JAssert("", false)
 #define JASSERT_STDERR_FD (jassert_internal::jassert_console_fd())
 
 #define JASSERT_CONT(AB, term)                                               \
@@ -205,45 +236,34 @@ void set_log_file(const dmtcp::string &path,
 #define JASSERT_FUNC __FUNCTION__
 #define JASSERT_LINE JASSERT_STRINGIFY(__LINE__)
 #define JASSERT_FILE jassert_internal::jassert_basename(__FILE__)
-#define JASSERT_CONTEXT(type, reason)                                           \
-  Print('[').Print(getpid()).Print(                                             \
-    "] " type " at ").Print(JASSERT_FILE).Print(":" JASSERT_LINE " in ").Print( \
+#define JASSERT_CONTEXT(reason)                                                 \
+  Print(" at ").Print(JASSERT_FILE).Print(":" JASSERT_LINE " in ").Print(  \
     JASSERT_FUNC).Print("; REASON='" reason "'\n")
 
 #ifdef LOGGING
-# define JTRACE(msg)                \
-  jassert_internal::JAssert(false). \
-  JASSERT_CONTEXT("TRACE", msg).JASSERT_CONT_A
+# define JTRACE(msg)
+  jassert_internal::JTrace().JASSERT_CONTEXT(msg).JASSERT_CONT_A
 #else // ifdef LOGGING
 # define JTRACE(msg)                                              \
   if (true) {                                                     \
-  } else jassert_internal::JAssert(false).JASSERT_CONTEXT("NOTE", \
-                                                          msg).JASSERT_CONT_A
+  } else jassert_internal::JTrace().JASSERT_CONTEXT(msg).JASSERT_CONT_A
 #endif // ifdef LOGGING
 
 #define JNOTE(msg)          \
   if (jassert_quiet >= 1) { \
   } else                    \
-    jassert_internal::JAssert(false).JASSERT_CONTEXT("NOTE", msg).JASSERT_CONT_A
+    jassert_internal::JNote().JASSERT_CONTEXT(msg).JASSERT_CONT_A
 
-#define JWARNING(term)                                                              \
-  if ((term) || jassert_quiet >= 2) {                                               \
-  } else                                                                            \
-    jassert_internal::JAssert(false).JASSERT_CONTEXT("WARNING",                     \
-                                                     "JWARNING(" # term ") failed") \
-    .JASSERT_CONT_A
+#define JWARNING(term)                                            \
+  if ((term) || jassert_quiet >= 2) {                             \
+  } else                                                          \
+    jassert_internal::JWarning()                                  \
+    .JASSERT_CONTEXT("JWARNING(" # term ") failed").JASSERT_CONT_A
 
-#ifndef LOGGING
-# define JASSERT(term)              \
-  if ((term)) {                     \
-  } else                            \
-    jassert_internal::JAssert(true) \
-    .JASSERT_CONTEXT("ERROR", "JASSERT(" # term ") failed").JASSERT_CONT_A
-#else // ifndef LOGGING
-# define JASSERT(term)              \
-  if ((term)) {                     \
-  } else                            \
-    jassert_internal::JAssert(true) \
-    .JASSERT_CONTEXT("ERROR", "JASSERT(" # term ") failed").JASSERT_CONT_A
-#endif // ifndef LOGGING
+#define JASSERT(term)                                             \
+  if (term) {                                                     \
+  } else                                                          \
+    jassert_internal::JAssert()                                   \
+    .JASSERT_CONTEXT("JASSERT(" # term ") failed").JASSERT_CONT_A
+
 #endif // ifndef JASSERT_H

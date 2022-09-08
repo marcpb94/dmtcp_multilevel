@@ -21,12 +21,17 @@
 
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <cxxabi.h>  /* For backtrace() */
 #include <execinfo.h>  /* For backtrace() */
+#include <chrono>
 #include <fstream>
+#include <iomanip>
 
 #include "jalib.h"
 #include "jassert.h"
@@ -38,52 +43,14 @@
 
 using namespace jalib;
 int jassert_quiet = 0;
+const char *redEscapeStr = "\033[0;31m";
+const char *clearEscapeStr = "\033[0m";
 
 namespace jalib
 {
 static int theLogFileFd = -1;
 static int errConsoleFd = -1;
-
-// With multiple global non-POD (Plain Old Data) objects, the order in which
-// their constructors are called is hard to reason about. It is not defined by
-// the language specification. However, in this case, we want precise control
-// over when the initialization of tmpDir happens. This is important because
-// the DMTCP libraries, and the executables that statically link with
-// libjalib.a can define their own global C++ objects. (In fact, libdmtcp
-// relies on this trick to inject a ckpt thread in every process).
-//
-// Thus wrapping global C++ objects in functions is the idiomatic way of
-// implementing this. This is portable and avoids non-deterministic behavior.
-// See: https://isocpp.org/wiki/faq/ctors#static-init-order, and
-// https://isocpp.org/wiki/faq/ctors#static-init-order-on-first-use.
-//
-// The following two functions provide wrappers around static local variables
-// and return a reference. Thus, we can use the function on the left-hand side
-// (as a lvalue) to modifying the underlying variable.
-
-static dmtcp::string&
-tmpDir()
-{
-  static dmtcp::string *s = NULL;
-  if (s == NULL) {
-    // Technically, this is a memory leak, but s is static and so it happens
-    // only once.
-    s = new (JALLOC_MALLOC(sizeof(dmtcp::string))) dmtcp::string();
-  }
-  return *s;
-}
-
-static dmtcp::string&
-uniquePidStr()
-{
-  static dmtcp::string *s = NULL;
-  if (s == NULL) {
-    // Technically, this is a memory leak, but s is static and so it happens
-    // only once.
-    s = new (JALLOC_MALLOC(sizeof(dmtcp::string))) dmtcp::string();
-  }
-  return *s;
-}
+static char logFilePath[PATH_MAX] = {0};
 
 static int
 jwrite(int fd, const char *str)
@@ -103,44 +70,58 @@ jassert_internal::JAssert::Text(const char *msg)
   return *this;
 }
 
-jassert_internal::JAssert::JAssert(bool exitWhenDone)
+jassert_internal::JAssert::JAssert(const char* type, bool exitWhenDone)
   : JASSERT_CONT_A(*this)
   , JASSERT_CONT_B(*this)
   , _exitWhenDone(exitWhenDone)
 {
+  using namespace std::chrono;
+
   if (exitWhenDone) {
-    Print("\033[0;31m");
+    Print(redEscapeStr);
+    Print("\n");
   }
+
+  time_point<system_clock> now = system_clock::now();
+  std::time_t ts = system_clock::to_time_t(now);
+  uint64_t ms = duration_cast<milliseconds>(now.time_since_epoch()).count() % 1000;
+
+  ss << "[" << std::put_time(std::localtime(&ts), "%F, %T.") << ms << ", "
+     << getpid() << ", " << jalib::gettid() << ", " << type << "] ";
 }
 
 jassert_internal::JAssert::~JAssert()
 {
-  if (_exitWhenDone) {
-    Print(jalib::Filesystem::GetProgramName());
-    Print(" (");
-    Print(getpid());
-    Print("): Terminating...\n");
-    Print("\033[0m");
-    jassert_safe_print(ss.str().c_str());
-    ss.str("");
-
-    // while(1) sleep(1);
-#ifdef LOGGING
-    jbacktrace();
-#endif // ifdef LOGGING
+  if (!_exitWhenDone) {
+    writeToConsole(ss.str().c_str());
+    writeToLog(ss.str().c_str());
+    return;
   }
 
-  if (!ss.str().empty()) {
-    jassert_safe_print(ss.str().c_str());
-  }
+  Print("    ");
+  Print(jalib::Filesystem::GetProgramName());
+  Print(": Terminating...\n");
 
-  if (_exitWhenDone) {
-    /* Generate core-dump for debugging */
-    if (getenv("DMTCP_ABORT_ON_FAILURE")) {
-      abort();
-    } else {
-      _exit(jalib::dmtcp_fail_rc());
-    }
+  PrintBacktrace();
+
+  Print("\n");
+  Print(clearEscapeStr);
+  Print("\n");
+
+  writeToConsole(ss.str().c_str());
+
+  // Do not write proc maps to console.
+  // TODO(kaarya): add PrintProcFds();
+  PrintProcMaps();
+  writeToLog(ss.str().c_str());
+
+  while (getenv("DMTCP_SLEEP_ON_FAILURE"));
+
+  /* Generate core-dump for debugging */
+  if (getenv("DMTCP_ABORT_ON_FAILURE")) {
+    abort();
+  } else {
+    _exit(jalib::dmtcp_fail_rc());
   }
 }
 
@@ -179,17 +160,6 @@ static int
 _open_log_safe(const dmtcp::string &s, int protectedFd)
 {
   return _open_log_safe(s.c_str(), protectedFd);
-}
-
-static dmtcp::string&
-theLogFilePath() {
-  static dmtcp::string *s = NULL;
-  if (s == NULL) {
-    // Technically, this is a memory leak, but s is static and so it happens
-    // only once.
-    s = new (JALLOC_MALLOC(sizeof(dmtcp::string))) dmtcp::string();
-  }
-  return *s;
 }
 
 void
@@ -237,104 +207,73 @@ jassert_internal::close_stderr()
   errConsoleFd = -1;
 }
 
-static const dmtcp::string
-writeJbacktraceMsg()
-{
-  dmtcp::ostringstream o;
-  dmtcp::string thisProgram = "libdmtcp.so";
-
-  if (jalib::Filesystem::GetProgramName() == "dmtcp_coordinator") {
-    thisProgram = "dmtcp_coordinator";
-  }
-  if (jalib::Filesystem::GetProgramName() == "dmtcp_checkpoint") {
-    thisProgram = "dmtcp_launch";
-  }
-  if (jalib::Filesystem::GetProgramName() == "dmtcp_restart") {
-    thisProgram = "dmtcp_restart";
-  }
-  dmtcp::string msg = dmtcp::string("")
-    + "\n   *** Stack trace is available ***\n"                         \
-      "   Try using:  util/dmtcp_backtrace.py  (found in DMTCP_ROOT)\n" \
-      "   Try the following command line:\n"                            \
-      "     ";
-  o << msg << "util/dmtcp_backtrace.py" << " "
-    << thisProgram << " "
-    << tmpDir() << "/backtrace."
-    << uniquePidStr() << " ";
-
-  // Weird bug:  If we don't start a new statement here,
-  // then the second call to jalib::uniquePidStr() returns just 831.
-  o << tmpDir() << "/proc-maps."
-    << uniquePidStr()
-    << "\n   (For further help, try:  util/dmtcp_backtrace.py --help)\n";
-  return o.str();
-}
-
-static void
-writeBacktrace()
+void
+jassert_internal::JAssert::PrintBacktrace()
 {
   void *buffer[BT_SIZE];
   int nptrs = backtrace(buffer, BT_SIZE);
-  dmtcp::string path = tmpDir() + "/backtrace." + uniquePidStr();
-  int fd = jalib::open(
-      path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
 
-  if (fd != -1) {
-    backtrace_symbols_fd(buffer, nptrs, fd);
-    jalib::close(fd);
-  }
+  Print("    Backtrace:\n");
+  char buf[1024];
+
+  for (int i = 1; i < nptrs; i++) {
+    Dl_info info;
+    ss << "        " << i << ' ' ;
+    if (dladdr1(buffer[i], &info, NULL, 0)) {
+      int status;
+      size_t buflen = sizeof(buf);
+      buf[0] = '\0';
+      if (info.dli_sname) {
+        char *demangled =
+          abi::__cxa_demangle(info.dli_sname, buf, &buflen, &status);
+        if (status != 0) {
+          strncpy(buf, info.dli_sname, sizeof(buf) - 1);
+        }
+      }
+
+      ss << (buf[0] ? buf : "") << " in " << info.dli_fname << " ";
+    }
+    ss << XToHexString(buffer[i]) << "\n";
+	}
 }
 
 // This routine is called when JASSERT triggers.  Something failed.
 // DOES (for further diagnosis):  cp /proc/self/maps $DMTCP_TMPDIR/proc-maps
 // WITHOUT malloc or spawning process (could be dangerous in fragile state).
-static void
-writeProcMaps()
+void
+jassert_internal::JAssert::PrintProcMaps()
 {
-  char mapsBuf[50000];
-  int count;
+  ssize_t count;
+  char buf[4096] = {0};
   int fd = jalib::open("/proc/self/maps", O_RDONLY, 0);
-
   if (fd == -1) {
     return;
   }
-  count = jalib::readAll(fd, mapsBuf, sizeof(mapsBuf) - 1);
-  jalib::close(fd);
 
-  dmtcp::string path = tmpDir() + "/proc-maps." + uniquePidStr();
-  fd =
-    jalib::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
-  if (fd == -1) {
-    return;
+  Print("    Memory maps: \n");
+
+  while ((count = jalib::readAll(fd, buf, sizeof(buf) - 1)) > 0) {
+    Print(buf);
   }
-  count = jalib::writeAll(fd, mapsBuf, count);
+
+  Print("\n");
+
   jalib::close(fd);
-}
-
-jassert_internal::JAssert&
-jassert_internal::JAssert::jbacktrace()
-{
-  writeBacktrace();
-  writeProcMaps();
-
-  // This prints to stdout and to jalib::logFd()
-  Print(writeJbacktraceMsg());
-  return *this;  // Needed as part of JASSERT macro
 }
 
 void
-jassert_internal::set_log_file(const dmtcp::string &path,
-                               const dmtcp::string _tmpDir,
-                               const dmtcp::string &_uniquePidStr)
+jassert_internal::set_log_file(const dmtcp::string &path)
 {
-  tmpDir() = _tmpDir;
-  uniquePidStr() = _uniquePidStr;
-
-  theLogFilePath() = path;
   if (theLogFileFd != -1) {
     jalib::close(theLogFileFd);
+    theLogFileFd = -1;
   }
-  theLogFileFd = -1;
+  strncpy(logFilePath, path.c_str(), sizeof(logFilePath) - 1);
+}
+
+void jassert_internal::open_log_file()
+{
+  dmtcp::string path = logFilePath;
   if (path.length() > 0) {
     theLogFileFd = _open_log_safe(path, jalib::logFd());
     if (theLogFileFd == -1) {
@@ -350,15 +289,44 @@ jassert_internal::set_log_file(const dmtcp::string &path,
       theLogFileFd = _open_log_safe(path + "_5", jalib::logFd());
     }
   }
+
+  // Dump process name, environment, etc.
+  if (theLogFileFd != -1) {
+    dmtcp::ostringstream a;
+
+    a << "[" << getpid() << "] INFO at " << JASSERT_FILE << ":" << JASSERT_LINE
+      << " in " << JASSERT_FUNC << "; REASON='Program: " << Filesystem::GetProgramName()
+      << "'\n  Environment:";
+
+    for (size_t i = 0; environ[i] != NULL; i++) {
+      a << "\n    " << environ[i] << ";";
+    }
+
+    a << "\n";
+    jwrite(theLogFileFd, a.str().c_str());
+  }
 }
 
 void
-jassert_internal::jassert_safe_print(const char *str)
+jassert_internal::JAssert::writeToConsole(const char *str)
 {
   if (errConsoleFd != -1) {
     // FIXME: temporary solution
     printf("%s", str); fflush(stdout);
     jwrite(errConsoleFd, str);
+  }
+}
+
+void
+jassert_internal::JAssert::writeToLog(const char *str)
+{
+  // Lazily open log file.
+  if (theLogFileFd == -1) {
+    if (fcntl(jalib::logFd(), F_GETFL, 0) != -1) {
+      theLogFileFd = jalib::logFd();
+    } else if (logFilePath[0] != '\0') {
+      open_log_file();
+    }
   }
 
   if (theLogFileFd != -1) {
